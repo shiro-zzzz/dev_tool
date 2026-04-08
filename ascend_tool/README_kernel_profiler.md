@@ -93,7 +93,7 @@
 | `PROF_INIT(gt)` | `GlobalTensor<int64_t>& gt` | 初始化：从 GM 读取当前迭代计数，重置本地缓存，自动记录起始时间戳 (tag=0) |
 | `PROF_RECORD_TIME(tag)` | `int64_t tag` | 记录一个 (tag, timestamp) 对到本核本地缓存 |
 | `PROF_RECORD_TIME_SYNC(tag)` | `int64_t tag` | 先执行 `PipeBarrier<PIPE_ALL>()`，再记录 (tag, timestamp) |
-| `PROF_RECORD_TIME_SYNC(tag, X)` | `int64_t tag`, `PipelineType X` | 先执行 `PipeBarrier<X>()`，再记录 (tag, timestamp)。`X` 可选 `PIPE_V` / `PIPE_M` / `PIPE_S` / `PIPE_MTE1` / `PIPE_MTE2` / `PIPE_MTE3` / `PIPE_ALL` 等 |
+| `PROF_RECORD_TIME_SYNC(tag, X)` | `int64_t tag`, `pipe_t X` | 先执行 `PipeBarrier<X>()`，再记录 (tag, timestamp)。`X` 可选 `PIPE_V` / `PIPE_M` / `PIPE_S` / `PIPE_MTE1` / `PIPE_MTE2` / `PIPE_MTE3` / `PIPE_ALL` 等 |
 | `PROF_TO_GM(gt)` | `GlobalTensor<int64_t>& gt` | 自动追加 ITER_END (tag=99999)，将本核本迭代数据 flush 到 GM，迭代计数 +1 |
 | `PROF_SLEEP_US(us)` | `int64_t us` | busy-wait 指定微秒数（用于在 trace 中插入可视间隔） |
 | `PROF_SYNC_ALL()` | — | 全核 barrier（`SyncAll<true>()`），用于创建对齐标记点 |

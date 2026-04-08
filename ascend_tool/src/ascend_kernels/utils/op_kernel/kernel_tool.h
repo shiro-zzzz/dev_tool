@@ -266,7 +266,7 @@ __aicore__ inline void RecordTime(int64_t tag)
 //   PipeBarrier<PipeType>() is called before recording.
 //   Default PipeType = PIPE_ALL.
 // ------------------------------------------------------------
-template <AscendC::PipelineType PipeType = AscendC::PIPE_ALL>
+template <pipe_t PipeType = PIPE_ALL>
 __aicore__ inline void RecordTimeSync(int64_t tag)
 {
     AscendC::PipeBarrier<PipeType>();
@@ -343,7 +343,7 @@ __aicore__ inline void ProfileToGm(AscendC::GlobalTensor<int64_t>& gt)
   // PROF_RECORD_TIME_SYNC(tag)         → PipeBarrier<PIPE_ALL>() + RecordTime
   // PROF_RECORD_TIME_SYNC(tag, PIPE_V) → PipeBarrier<PIPE_V>()  + RecordTime
   #define _PROF_RTS_1(tag)                RecordTimeSync<>(tag)
-  #define _PROF_RTS_2(tag, pipe)          RecordTimeSync<AscendC::pipe>(tag)
+  #define _PROF_RTS_2(tag, pipe)          RecordTimeSync<pipe>(tag)
   #define _PROF_RTS_SEL(_1, _2, NAME, ...) NAME
   #define PROF_RECORD_TIME_SYNC(...)      _PROF_RTS_SEL(__VA_ARGS__, _PROF_RTS_2, _PROF_RTS_1)(__VA_ARGS__)
 
