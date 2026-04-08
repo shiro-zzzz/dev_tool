@@ -92,6 +92,8 @@
 | `PROF_MAX_ITERS` | 编译宏 (默认 `10`) | 最大迭代轮数，可在 `#include` 前自定义 |
 | `PROF_INIT(gt)` | `GlobalTensor<int64_t>& gt` | 初始化：从 GM 读取当前迭代计数，重置本地缓存，自动记录起始时间戳 (tag=0) |
 | `PROF_RECORD_TIME(tag)` | `int64_t tag` | 记录一个 (tag, timestamp) 对到本核本地缓存 |
+| `PROF_RECORD_TIME_SYNC(tag)` | `int64_t tag` | 先执行 `PipeBarrier<PIPE_ALL>()`，再记录 (tag, timestamp) |
+| `PROF_RECORD_TIME_SYNC(tag, X)` | `int64_t tag`, `PipelineType X` | 先执行 `PipeBarrier<X>()`，再记录 (tag, timestamp)。`X` 可选 `PIPE_V` / `PIPE_M` / `PIPE_S` / `PIPE_MTE1` / `PIPE_MTE2` / `PIPE_MTE3` / `PIPE_ALL` 等 |
 | `PROF_TO_GM(gt)` | `GlobalTensor<int64_t>& gt` | 自动追加 ITER_END (tag=99999)，将本核本迭代数据 flush 到 GM，迭代计数 +1 |
 | `PROF_SLEEP_US(us)` | `int64_t us` | busy-wait 指定微秒数（用于在 trace 中插入可视间隔） |
 | `PROF_SYNC_ALL()` | — | 全核 barrier（`SyncAll<true>()`），用于创建对齐标记点 |
@@ -103,6 +105,7 @@
 |------|------|
 | `ProfileInit(gt)` | 从 GM 读 `iterCount`（首次 launch 为 0），重置打点索引，记录 tag=0 时间戳 |
 | `RecordTime(tag)` | 调用 `GetSystemCycle()` 获取当前 cycle 并与 tag 一起写入本地 `__BLOCK_LOCAL__` 数组 |
+| `RecordTimeSync<PipeType>(tag)` | `PipeBarrier<PipeType>()` + `RecordTime(tag)`。模板参数默认 `PIPE_ALL` |
 | `ProfileToGm(gt)` | 自动追加 ITER_END sentinel，写入 Global Header（仅 core 0），写入本迭代数据，更新 `iterCount` |
 | `SleepUs(us)` | 基于 `GetSystemCycle()` 的 busy-wait，50 cycles = 1 μs |
 
@@ -215,8 +218,8 @@ AscendProfTool(block_dim=None, sync_rounds=16)
 | `output_path` | `str` | 输出 JSON 文件路径 |
 | `kernel_names` | `Dict[int, str]` | kernel 索引到名称的映射 |
 | `rank_id` | `int` | 本 rank ID |
-| `tag_names` | `Dict[int, str]` | tag 到可读事件名称的映射，如 `{1: "DMA_Start"}` |
-| `tag_name_fn` | `callable` | 自定义 tag 名称解析函数 |
+| `tag_names` | `Dict[int, str]` | tag 到可读标签片段的映射，如 `{1: "DMA_Start"}`，匹配的 tag 替换为自定义名称 |
+| `tag_name_fn` | `callable` | 签名 `fn(tag_start, tag_end) -> str`，自定义命名逻辑 |
 
 ---
 
@@ -255,11 +258,14 @@ extern "C" __global__ __aicore__ void my_kernel(GM_ADDR x, GM_ADDR profBuf, ...)
 
     PROF_INIT(profGm);             // 自动记录起始时间戳 (tag=0)
 
-    // ... 业务逻辑阶段 1 ...
-    PROF_RECORD_TIME(1);           // 阶段 1 结束
+    // ... 业务逻辑阶段 1 (含 Vector 流水线操作) ...
+    PROF_RECORD_TIME_SYNC(1, PIPE_V);  // 等待 Vector 流水线完成后记录
 
     // ... 业务逻辑阶段 2 ...
-    PROF_RECORD_TIME(2);           // 阶段 2 结束
+    PROF_RECORD_TIME_SYNC(2);          // 等待所有流水线完成后记录 (默认 PIPE_ALL)
+
+    // ... 业务逻辑阶段 3 (纯搬运) ...
+    PROF_RECORD_TIME(3);               // 不需要同步，直接记录
 
     PROF_TO_GM(profGm);            // 自动追加 ITER_END(99999)，flush 到 GM
 }
@@ -462,6 +468,10 @@ Tag 编码约定：
 │    3. g_profileData[idx*2] = tag, [idx*2+1] = cycle             │
 │    4. idx++                                                     │
 │                                                                 │
+│  PROF_RECORD_TIME_SYNC(tag [, PipeType]):                       │
+│    1. PipeBarrier<PipeType>()  (默认 PIPE_ALL)                   │
+│    2. 同 PROF_RECORD_TIME 的步骤 1-4                             │
+│                                                                 │
 │  PROF_TO_GM(gt):                                                │
 │    1. 自动调用 RecordTime(99999) 追加 ITER_END sentinel         │
 │    2. Core 0: 写入 Global Header [0..7]                         │
@@ -616,6 +626,53 @@ Host 侧计算偏移：
 - 每对相邻打点 `(tag_j, ts_j) → (tag_{j+1}, ts_{j+1})` 生成一个 Duration Event (`ph: "X"`)
 - 时间戳从 cycles 转换为微秒：`ts_us = ts_cycles / 50`
 - 时钟偏移在转换前扣除
+
+**事件默认命名规则**：
+
+每个 Duration Event 跨越一对相邻打点 `(tag_start, tag_end)`，其 `name` 格式为 `Tag_<start>-<end>`。
+
+解析优先级：
+
+1. `tag_names` 字典（用户显式传入，匹配到的 tag 替换为自定义名称，未匹配的保留默认标签）
+2. `tag_name_fn` 回调函数（签名 `fn(tag_start, tag_end) -> str`）
+3. 内置默认规则（`_default_tag_name`）：
+
+**标签片段规则**：
+
+| Tag 值 | 标签片段 | 说明 |
+|--------|----------|------|
+| `0` | `Init` | `PROF_INIT` 自动记录的起始时间戳 |
+| `99999` | `IterEnd` | `PROF_TO_GM` 自动追加的迭代结束 sentinel |
+| 其他任意值 `N` | `N` | 直接使用数字，如 tag=1 → `1` |
+
+**命名示例**：
+
+| 起始 Tag | 结束 Tag | 默认事件名 |
+|----------|----------|------------|
+| 0 | 1 | `Tag_Init-1` |
+| 1 | 2 | `Tag_1-2` |
+| 2 | 99999 | `Tag_2-IterEnd` |
+| 0 | 99999 | `Tag_Init-IterEnd` |
+| 100 | 200 | `Tag_100-200` |
+
+示例：若某核记录了 `[0, 1, 2, 99999]` 四个 tag，则生成 3 个 Duration Event：
+
+```
+| Tag_Init-1 | Tag_1-2 | Tag_2-IterEnd |
+t0          t1       t2              t3
+```
+
+用户可通过 `tag_names` 覆盖任意 tag 的标签片段：
+
+```python
+tool.generate_trace_json(
+    [prof_data], offsets, "trace.json",
+    tag_names={1: "DMA_Start", 2: "Compute_Done"},
+    # 0→1 变为 Tag_Init-DMA_Start
+    # 1→2 变为 Tag_DMA_Start-Compute_Done
+    # 2→99999 变为 Tag_Compute_Done-IterEnd
+)
+```
 
 **查看方式**：
 1. Chrome 浏览器打开 `chrome://tracing`，拖入 JSON 文件

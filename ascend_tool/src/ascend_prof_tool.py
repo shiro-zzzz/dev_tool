@@ -313,10 +313,11 @@ class AscendProfTool:
         rank_id : int
             本 rank ID (用于多卡场景的 offset 查找).
         tag_names : dict[int, str], optional
-            tag 到可读事件名称的映射, 例如 {1: "DMA_Start", 2: "Compute_Done"}.
-            优先级高于 tag_name_fn 和内置规则.
+            tag 到可读标签片段的映射, 例如 {1: "DMA_Start", 2: "Compute_Done"}.
+            匹配到的 tag 替换为自定义名称, 优先级高于 tag_name_fn 和内置规则.
         tag_name_fn : callable, optional
-            将 tag (int) 转换为可读名称的函数. 默认使用内置规则.
+            签名 fn(tag_start: int, tag_end: int) -> str, 将一对相邻 tag 转换为可读名称.
+            默认使用内置规则 (Tag_<start>-<end>).
         """
         if kernel_names is None:
             kernel_names = {}
@@ -324,7 +325,7 @@ class AscendProfTool:
             tag_name_fn = self._make_tag_name_fn(tag_names)
         elif tag_names:
             base_fn = tag_name_fn
-            tag_name_fn = lambda t: tag_names[t] if t in tag_names else base_fn(t)
+            tag_name_fn = lambda s, e: tag_names.get(s, base_fn(s, e))
 
         trace_events = []
 
@@ -372,6 +373,7 @@ class AscendProfTool:
                     # 生成 duration events (相邻打点之间为一个 duration event)
                     for j in range(len(records) - 1):
                         tag = records[j]["tag"]
+                        tag_next = records[j + 1]["tag"]
                         ts_begin = records[j]["cycle"] - offset
                         ts_end = records[j + 1]["cycle"] - offset
 
@@ -379,7 +381,7 @@ class AscendProfTool:
                         ts_begin_us = ts_begin / CYCLES_PER_US
                         dur_us = (ts_end - ts_begin) / CYCLES_PER_US
 
-                        phase_name = tag_name_fn(tag)
+                        phase_name = tag_name_fn(tag, tag_next)
 
                         trace_events.append({
                             "name": phase_name,
@@ -447,9 +449,9 @@ class AscendProfTool:
         kernel_names : dict[int, str], optional
             kernel 索引到名称的映射.
         tag_names : dict[int, str], optional
-            tag 到可读事件名称的映射.
+            tag 到可读标签片段的映射.
         tag_name_fn : callable, optional
-            tag 名称解析函数.
+            签名 fn(tag_start: int, tag_end: int) -> str.
         """
         import pickle
         import torch
@@ -461,7 +463,7 @@ class AscendProfTool:
             tag_name_fn = self._make_tag_name_fn(tag_names)
         elif tag_names:
             base_fn = tag_name_fn
-            tag_name_fn = lambda t: tag_names[t] if t in tag_names else base_fn(t)
+            tag_name_fn = lambda s, e: tag_names.get(s, base_fn(s, e))
 
         # 序列化本 rank 的 prof_data_list
         local_bytes = pickle.dumps(prof_data_list)
@@ -526,13 +528,14 @@ class AscendProfTool:
 
                         for j in range(len(records) - 1):
                             tag = records[j]["tag"]
+                            tag_next = records[j + 1]["tag"]
                             ts_begin = records[j]["cycle"] - offset
                             ts_end = records[j + 1]["cycle"] - offset
                             ts_begin_us = ts_begin / CYCLES_PER_US
                             dur_us = (ts_end - ts_begin) / CYCLES_PER_US
 
                             trace_events.append({
-                                "name": tag_name_fn(tag),
+                                "name": tag_name_fn(tag, tag_next),
                                 "cat": kname,
                                 "ph": "X",
                                 "ts": ts_begin_us,
@@ -639,17 +642,29 @@ class AscendProfTool:
     @classmethod
     def _make_tag_name_fn(cls, tag_names: Optional[Dict[int, str]] = None):
         """构造 tag 名称解析函数, 用户映射优先于内置规则."""
-        def fn(tag: int) -> str:
-            if tag_names and tag in tag_names:
-                return tag_names[tag]
-            return cls._default_tag_name(tag)
+        def fn(tag_start: int, tag_end: int) -> str:
+            if tag_names:
+                start_name = tag_names.get(tag_start)
+                end_name = tag_names.get(tag_end)
+                if start_name is not None and end_name is not None:
+                    return f"Tag_{start_name}-{end_name}"
+                if start_name is not None:
+                    return f"Tag_{start_name}-{cls._tag_label(tag_end)}"
+                if end_name is not None:
+                    return f"Tag_{cls._tag_label(tag_start)}-{end_name}"
+            return cls._default_tag_name(tag_start, tag_end)
         return fn
 
     @staticmethod
-    def _default_tag_name(tag: int) -> str:
-        """将 kernel_tool.h 的 tag 转换为可读名称."""
+    def _tag_label(tag: int) -> str:
+        """将单个 tag 转换为标签片段."""
         if tag == 0:
             return "Init"
         if tag == PROF_ITER_END_TAG:
             return "IterEnd"
-        return f"Tag_{tag}"
+        return str(tag)
+
+    @classmethod
+    def _default_tag_name(cls, tag_start: int, tag_end: int) -> str:
+        """将一对相邻 tag 转换为可读的 Duration Event 名称."""
+        return f"Tag_{cls._tag_label(tag_start)}-{cls._tag_label(tag_end)}"

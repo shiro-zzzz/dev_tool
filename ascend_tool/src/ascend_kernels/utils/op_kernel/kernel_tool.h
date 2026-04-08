@@ -262,6 +262,18 @@ __aicore__ inline void RecordTime(int64_t tag)
 }
 
 // ------------------------------------------------------------
+// RecordTimeSync — pipeline barrier + record a (tag, timestamp) pair
+//   PipeBarrier<PipeType>() is called before recording.
+//   Default PipeType = PIPE_ALL.
+// ------------------------------------------------------------
+template <AscendC::PipelineType PipeType = AscendC::PIPE_ALL>
+__aicore__ inline void RecordTimeSync(int64_t tag)
+{
+    AscendC::PipeBarrier<PipeType>();
+    RecordTime(tag);
+}
+
+// ------------------------------------------------------------
 // ProfileToGm — flush the current iteration's profiling data to GM.
 //   One launch = one iteration. Call exactly once per launch.
 //
@@ -327,12 +339,21 @@ __aicore__ inline void ProfileToGm(AscendC::GlobalTensor<int64_t>& gt)
 #ifdef ASCEND_PROFILE_ENABLE
   #define PROF_INIT(gt)          ProfileInit(gt)
   #define PROF_RECORD_TIME(tag)  RecordTime(tag)
+
+  // PROF_RECORD_TIME_SYNC(tag)         → PipeBarrier<PIPE_ALL>() + RecordTime
+  // PROF_RECORD_TIME_SYNC(tag, PIPE_V) → PipeBarrier<PIPE_V>()  + RecordTime
+  #define _PROF_RTS_1(tag)                RecordTimeSync<>(tag)
+  #define _PROF_RTS_2(tag, pipe)          RecordTimeSync<AscendC::pipe>(tag)
+  #define _PROF_RTS_SEL(_1, _2, NAME, ...) NAME
+  #define PROF_RECORD_TIME_SYNC(...)      _PROF_RTS_SEL(__VA_ARGS__, _PROF_RTS_2, _PROF_RTS_1)(__VA_ARGS__)
+
   #define PROF_TO_GM(gt)         ProfileToGm(gt)
   #define PROF_SLEEP_US(us)      SleepUs(us)
   #define PROF_SYNC_ALL()        AscendC::SyncAll<true>()
 #else
   #define PROF_INIT(gt)          ((void)0)
   #define PROF_RECORD_TIME(tag)  ((void)0)
+  #define PROF_RECORD_TIME_SYNC(...)  ((void)0)
   #define PROF_TO_GM(gt)         ((void)0)
   #define PROF_SLEEP_US(us)      ((void)0)
   #define PROF_SYNC_ALL()        ((void)0)
