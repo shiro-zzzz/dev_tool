@@ -22,13 +22,54 @@ test_notify_dispatch_prof.py — NotifyDispatchProf 算子验证脚本
 
 import argparse
 import os
+import sys
 import numpy as np
+from pathlib import Path
 
+# Add parent directory so we can import ascend_prof_tool
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from ascend_prof_tool import AscendProfTool
+
+# profiling buffer layout constants (from kernel_tool.h)
+PROF_ITER_CORE_STRIDE = 136
+PROF_CORE_HEADER_SIZE = 8
+PROF_GLOBAL_HEADER_SIZE = 8
+PROF_BLOCK_DIM_FALLBACK = 64
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  常量定义
 # ─────────────────────────────────────────────────────────────────────────────
 SEND_PER_GROUP = 3  # 每个 expert 的发送数据分组：(token_count, prefix_sum, num_tokens)
+NOTIFY_DISPATCH_TAG_NAMES = {
+    0: "Init",
+    100: "AssembleSendDataDone",
+    200: "InputToShareSliceDone",
+    300: "ShareToShareSliceDone",
+    400: "ReorderOutputDone",
+    500: "BuildTotalRecvTokensDone",
+    600: "BuildRecvCountDone",
+    700: "BuildRecvOffsetDone",
+    800: "BuildMaxBsDone",
+    900: "BuildRecvTokenPerExpDone",
+    999: "AllDone",
+    99999: "IterEnd",
+}
+
+
+def prof_buf_int64_size(block_dim: int, max_iters: int = 1) -> int:
+    """kernel_tool.h profiling buffer 所需 int64 元素数 (多轮迭代)."""
+    global_header = PROF_GLOBAL_HEADER_SIZE
+    core_headers = block_dim * PROF_CORE_HEADER_SIZE
+    data_region = max_iters * block_dim * PROF_ITER_CORE_STRIDE
+    return global_header + core_headers + data_region
+
+
+def infer_block_dim_from_offsets(rank_offsets, rank, fallback=PROF_BLOCK_DIM_FALLBACK):
+    """从 calibrate_rank_clocks 的结果推断当前 rank 的实际核数。"""
+    core_ids = [core for (r, core) in rank_offsets.keys() if r == rank]
+    if not core_ids:
+        return fallback
+    return max(core_ids) + 1
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -202,7 +243,7 @@ def init_hccl_env_and_group(local_rank, num_local_ranks, dist, torch, torch_npu)
     return rank, rank_size, local_rank, local_rank_size, comm_group, group
 
 
-def npu_worker(local_rank, num_local_ranks):
+def npu_worker(local_rank, num_local_ranks, trace_dir):
     """
     在已建立 HCCL 通信域的多卡环境下运行 NotifyDispatchProf 算子。
     使用 torch.multiprocessing.spawn 拉起多进程。
@@ -230,10 +271,22 @@ def npu_worker(local_rank, num_local_ranks):
         print(f"  rank_size={rank_size}, local_rank_size={local_rank_size}")
         print("=" * 70)
 
+    os.makedirs(trace_dir, exist_ok=True)
+    tool = AscendProfTool(sync_rounds=16)
+    # 预热 HCCL，避免首次校准抖动
+    dist.barrier(group=group)
+    warmup_tensor = torch.ones(1, dtype=torch.int64, device=f"npu:{local_rank}")
+    dist.all_reduce(warmup_tensor, op=dist.ReduceOp.SUM, group=group)
+    torch_npu.npu.synchronize()
+    rank_offsets = tool.calibrate_rank_clocks(rank_size, rank)
+    prof_block_dim = infer_block_dim_from_offsets(rank_offsets, rank)
+    print(f"[Rank {rank}] detected block_dim={prof_block_dim}")
+
     # ---------- 参数 ----------
     NUM_EXPERTS = rank_size * 4     # 每 rank 4 个 expert
     NUM_TOKENS = 1024
     SEND_COUNT = NUM_EXPERTS * SEND_PER_GROUP
+    NUM_RUNS = 1
 
     # ---------- 构造输入 ----------
     # tokenPerExpertData: 每个 expert 被分配的 token 数
@@ -249,23 +302,28 @@ def npu_worker(local_rank, num_local_ranks):
 
     # sendData: 预分配空间，由 kernel 内部的 AssembleSendData 填充
     send_data = torch.zeros(SEND_COUNT, dtype=torch.int32, device=f"npu:{local_rank}")
+    # prof_buf: 预分配 profiling 缓冲区，支持多轮 launch 追加
+    prof_buf_elems = prof_buf_int64_size(prof_block_dim, max_iters=NUM_RUNS)
+    prof_buf = torch.zeros(prof_buf_elems, dtype=torch.int64, device=f"npu:{local_rank}")
 
     # ---------- 执行算子 ----------
     if rank == 0:
         print(f"\n  Running NotifyDispatchProf: num_experts={NUM_EXPERTS}, "
               f"num_tokens={NUM_TOKENS}, send_count={SEND_COUNT}")
 
-    outputs = ascend_tool.notify_dispatch_prof(
-        send_data=send_data,
-        token_per_expert_data=token_per_expert_data,
-        send_count=SEND_COUNT,
-        num_tokens=NUM_TOKENS,
-        comm_group=comm_group,
-        rank_size=rank_size,
-        rank_id=rank,
-        local_rank_size=local_rank_size,
-        local_rank_id=local_rank,
-    )
+    for _ in range(NUM_RUNS):
+        outputs = ascend_tool.notify_dispatch_prof(
+            send_data=send_data,
+            token_per_expert_data=token_per_expert_data,
+            prof_buf=prof_buf,
+            send_count=SEND_COUNT,
+            num_tokens=NUM_TOKENS,
+            comm_group=comm_group,
+            rank_size=rank_size,
+            rank_id=rank,
+            local_rank_size=local_rank_size,
+            local_rank_id=local_rank,
+        )
     torch_npu.npu.synchronize()
 
     # ---------- 解包输出 ----------
@@ -297,12 +355,38 @@ def npu_worker(local_rank, num_local_ranks):
         print(f"  形状检查: {'PASS' if shape_pass else 'FAIL'}")
         print(f"  总体: {'PASS' if shape_pass and consistency_check else 'FAIL'}")
 
+    # ---------- 解析并生成 trace ----------
+    prof_data = AscendProfTool.parse_prof_buf(prof_buf)
+    trace_path = os.path.join(trace_dir, f"notify_dispatch_prof_rank{rank}.json")
+    tool.generate_trace_json(
+        prof_data_list=[prof_data],
+        offsets=rank_offsets,
+        output_path=trace_path,
+        kernel_names={0: "NotifyDispatchProf"},
+        rank_id=rank,
+        tag_names=NOTIFY_DISPATCH_TAG_NAMES,
+    )
+    print(f"[Rank {rank}] Trace generated: {trace_path}")
+
+    merged_path = os.path.join(trace_dir, "notify_dispatch_prof_merged.json")
+    tool.generate_merged_trace_json(
+        prof_data_list=[prof_data],
+        offsets=rank_offsets,
+        output_path=merged_path,
+        world_size=rank_size,
+        rank=rank,
+        kernel_names={0: "NotifyDispatchProf"},
+        tag_names=NOTIFY_DISPATCH_TAG_NAMES,
+    )
+    if rank == 0:
+        print(f"[Rank 0] Merged trace generated: {merged_path}")
+
     # ---------- 清理 ----------
     dist.barrier(group=group)
     dist.destroy_process_group()
 
 
-def npu_mode(num_processes):
+def npu_mode(num_processes, trace_dir):
     try:
         import torch
     except ImportError as e:
@@ -312,7 +396,7 @@ def npu_mode(num_processes):
 
     torch.multiprocessing.spawn(
         fn=npu_worker,
-        args=(num_processes,),
+        args=(num_processes, trace_dir),
         nprocs=num_processes,
     )
 
@@ -329,9 +413,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num-processes", type=int, default=2,
         help="npu 模式进程数 (使用 torch.multiprocessing.spawn 拉起)")
+    parser.add_argument(
+        "--trace-dir", type=str, default="./traces",
+        help="Trace 文件输出目录 (default: ./traces)")
     args = parser.parse_args()
 
     if args.mode == "demo":
         demo_mode()
     else:
-        npu_mode(args.num_processes)
+        npu_mode(args.num_processes, args.trace_dir)

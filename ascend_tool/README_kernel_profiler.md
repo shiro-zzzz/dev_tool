@@ -23,6 +23,7 @@
   - [5.5 多卡全局时钟对齐原理](#55-多卡全局时钟对齐原理)
   - [5.6 Trace Event JSON 生成](#56-trace-event-json-生成)
 - [6. GM Buffer 大小计算](#6-gm-buffer-大小计算)
+- [7. Cursor Skill：给任意算子使能 Prof 打点](#7-cursor-skill给任意算子使能-prof-打点)
 
 ---
 
@@ -696,3 +697,56 @@ PROF_GM_BUF_SIZE(coreNum, maxIters)
 | 8 | 8,832 | 35,840 | 88,064 |
 | 16 | 17,536 | 71,680 | 176,128 |
 | 32 | 34,944 | 143,360 | 352,256 |
+
+---
+
+## 7. Cursor Skill：给任意算子使能 Prof 打点
+
+项目内新增了一个可复用技能（Skill），用于把“给算子加 `prof_buf` + kernel 打点 + pybind/aclnn 接线 + 测试生成 trace”的整套流程标准化：
+
+- 技能路径：`.cursor/skills/enable-ascend-op-prof/SKILL.md`
+- 技能名称：`enable-ascend-op-prof`
+
+### 7.1 什么时候用
+
+当你要做以下任一任务时，建议直接触发此 Skill：
+
+- 给某个 Ascend 自定义算子新增 `prof_buf` 入参
+- 参考 `VecAddProf` 给 kernel 增加阶段打点
+- 同步修改 pybind / `aclnn*GetWorkspaceSize` 参数签名
+- 在 torch 用例中输出 rank trace + merged trace
+- 排查 `parse_prof_buf` 越界（如 buffer 大小与实际核数不一致）
+
+### 7.2 如何在 Cursor 中触发
+
+在 Agent 对话中直接下达类似指令即可：
+
+```text
+请使用 enable-ascend-op-prof skill，给 Xxx 算子加 prof_buf，并补齐 pybind 和 trace 用例。
+```
+
+或：
+
+```text
+参考 enable-ascend-op-prof skill，把当前算子改造成可生成 trace 的 Prof 算子。
+```
+
+### 7.3 Skill 覆盖的关键检查项
+
+该 Skill 默认会按以下链路检查并改造：
+
+1. `op_host + json`：新增 `prof_buf`，并保证 `DataType/Format/UnknownShapeFormat` 组合组数一致
+2. `op_kernel`：接入 `prof_buf`，在 `Process()` 中加入 `PROF_INIT` / `PROF_RECORD_TIME` / `PROF_TO_GM`
+3. `pybind`：声明、实现、`TORCH_LIBRARY` schema 三处签名一致
+4. `aclnn`：`GetWorkspaceSize` 签名透传 `profBuf`
+5. `torch` 用例：`calibrate_rank_clocks -> parse_prof_buf -> generate_trace_json -> generate_merged_trace_json`
+6. 保护项：避免 `prof_buf` 按错误核数分配导致解析越界
+
+### 7.4 推荐配套实践
+
+- 在用例里优先按运行时核数分配 `prof_buf`，不要长期硬编码核数
+- 统一维护 `tag_names`，提升 trace 可读性
+- 每次改造后至少验证：
+  - 算子能正常执行
+  - `parse_prof_buf` 能解析
+  - trace 文件可在 `chrome://tracing` 或 Perfetto 打开

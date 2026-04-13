@@ -26,6 +26,7 @@ at::Tensor ProfCoreClockSyncImpl(const at::Tensor &sync_buf);
 std::vector<at::Tensor> NotifyDispatchProfImpl(
     const at::Tensor &sendData,
     const at::Tensor &tokenPerExpertData,
+    const at::Tensor &profBuf,
     int64_t sendCount,
     int64_t numTokens,
     const std::string &commGroup,

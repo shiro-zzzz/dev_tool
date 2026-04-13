@@ -16,7 +16,7 @@ extern "C" {
 #endif // ACLNN_NOTIFY_DISPATCH_PROF_H_
 
 __attribute__((visibility("default"))) aclnnStatus aclnnNotifyDispatchProfGetWorkspaceSize(
-    const aclTensor *sendData, const aclTensor *tokenPerExpertData,
+    const aclTensor *sendData, const aclTensor *tokenPerExpertData, const aclTensor *profBuf,
     int64_t sendCount, int64_t numTokens, char *commGroup,
     int64_t rankSize, int64_t rankId, int64_t localRankSize, int64_t localRankId,
     const aclTensor *sendDataOffset, const aclTensor *recvData,

@@ -12,6 +12,8 @@
 
 #include "kernel_operator.h"
 #include <climits>
+#define ASCEND_PROFILE_ENABLE
+#include "kernel_tool.h"
 
 #include "comm_args.h"
 #include "data_copy.h"
@@ -46,7 +48,7 @@ public:
     {
     }
 
-    __aicore__ inline void Init(GM_ADDR sendDataInput, GM_ADDR tokenPerExpertDataInput, GM_ADDR sendDataOffsetOutput,
+    __aicore__ inline void Init(GM_ADDR sendDataInput, GM_ADDR tokenPerExpertDataInput, GM_ADDR profBuf, GM_ADDR sendDataOffsetOutput,
         GM_ADDR recvDataOutput, GM_ADDR totalRecvTokens, GM_ADDR recvCount, GM_ADDR recvOffset, GM_ADDR maxBs,
         GM_ADDR recvTokensPerExpert, int64_t len, int64_t numTokens, int op, int root, int cycleCount, GM_ADDR scale,
         int64_t scaleCount, GM_ADDR offset, int localRank, int localRankSize)
@@ -80,6 +82,7 @@ public:
         this->recvDataOutput = (__gm__ T *)recvDataOutput;
         sendDataInputGt.SetGlobalBuffer((__gm__ T *)sendDataInput);
         tokenPerExpertDataInputGt.SetGlobalBuffer((__gm__ int32_t *)tokenPerExpertDataInput);
+        profGm.SetGlobalBuffer((__gm__ int64_t *)profBuf);
         sendDataOffsetOutputGt.SetGlobalBuffer((__gm__ T *)sendDataOffsetOutput);
         recvDataOutputGt.SetGlobalBuffer((__gm__ T *)recvDataOutput);
         recvDataOutGt.SetGlobalBuffer((__gm__ int32_t *)recvDataOutput);
@@ -90,23 +93,42 @@ public:
 
     __aicore__ inline void Process()
     {
+        PROF_INIT(profGm);
         if (blockIdx < 1) {
             AssembleSendData();
         }
+        PROF_SYNC_ALL();
+        PROF_RECORD_TIME(100); // AssembleSendData done
+
         SyncAll<true>();
         if (blockIdx < coreNumPerStageX) {
             InputToShareSlice();
         }
+        PROF_SYNC_ALL();
+        PROF_RECORD_TIME(200); // InputToShareSlice done
+
         if (blockIdx < coreNumPerStageY) {
             ShareToShareSlice();
         }
+        PROF_SYNC_ALL();
+        PROF_RECORD_TIME(300); // ShareToShareSlice done
+
         SyncAll<true>();
         ReorderOutput();
+        PROF_RECORD_TIME(400); // ReorderOutput done
         BuildTotalRecvTokens();
+        PROF_RECORD_TIME(500); // BuildTotalRecvTokens done
         BuildRecvCount();
+        PROF_RECORD_TIME(600); // BuildRecvCount done
         BuildRecvOffset();
+        PROF_RECORD_TIME(700); // BuildRecvOffset done
         BuildMaxBs();
+        PROF_RECORD_TIME(800); // BuildMaxBs done
         BuildRecvTokenPerExp();
+        PROF_RECORD_TIME(900); // BuildRecvTokenPerExp done
+        PROF_SYNC_ALL();
+        PROF_RECORD_TIME(999); // all stages finished
+        PROF_TO_GM(profGm);
     }
 
 private:
@@ -422,6 +444,7 @@ private:
 
     GlobalTensor<T> sendDataInputGt;
     GlobalTensor<int> tokenPerExpertDataInputGt;
+    GlobalTensor<int64_t> profGm;
     GlobalTensor<T> sendDataOffsetOutputGt;
     GlobalTensor<T> recvDataOutputGt;
     GlobalTensor<int32_t> recvDataOutGt;

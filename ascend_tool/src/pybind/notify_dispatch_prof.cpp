@@ -11,6 +11,7 @@
 std::vector<at::Tensor> NotifyDispatchProfImpl(
     const at::Tensor &sendData,
     const at::Tensor &tokenPerExpertData,
+    const at::Tensor &profBuf,
     int64_t sendCount,
     int64_t numTokens,
     const std::string &commGroup,
@@ -33,7 +34,7 @@ std::vector<at::Tensor> NotifyDispatchProfImpl(
     auto recvTokensPerExpert = at::empty({numExperts / rankSize}, options.dtype(at::kLong));
 
     const char *commGroupPtr = commGroup.c_str();
-    EXEC_NPU_CMD(aclnnNotifyDispatchProf, sendData, tokenPerExpertData,
+    EXEC_NPU_CMD(aclnnNotifyDispatchProf, sendData, tokenPerExpertData, profBuf,
                  sendCount, numTokens, commGroupPtr,
                  rankSize, rankId, localRankSize, localRankId,
                  sendDataOffset, recvData, totalRecvTokens,

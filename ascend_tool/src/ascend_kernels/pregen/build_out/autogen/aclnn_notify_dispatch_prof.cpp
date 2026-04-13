@@ -23,6 +23,7 @@ static constexpr int32_t NNOPBASE_HCCL_SERVER_TYPE_END = 2;
 extern "C" void __attribute__((weak)) NnopbaseSetHcclServerType(void *executor, int32_t sType);
 
 aclnnStatus aclnnNotifyDispatchProfGetWorkspaceSize(const aclTensor *sendData, const aclTensor *tokenPerExpertData,
+                                                    const aclTensor *profBuf,
                                                     int64_t sendCount, int64_t numTokens, char *commGroup,
                                                     int64_t rankSize, int64_t rankId, int64_t localRankSize,
                                                     int64_t localRankId,
@@ -32,7 +33,7 @@ aclnnStatus aclnnNotifyDispatchProfGetWorkspaceSize(const aclTensor *sendData, c
                                                     const aclTensor *recvTokensPerExpert,
                                                     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
-    return aclnnInnerNotifyDispatchProfGetWorkspaceSize(sendData, tokenPerExpertData, sendCount, numTokens, commGroup,
+    return aclnnInnerNotifyDispatchProfGetWorkspaceSize(sendData, tokenPerExpertData, profBuf, sendCount, numTokens, commGroup,
                                                         rankSize, rankId, localRankSize, localRankId,
                                                         sendDataOffset, recvData, totalRecvTokens, recvCount,
                                                         recvOffset, maxBs, recvTokensPerExpert,

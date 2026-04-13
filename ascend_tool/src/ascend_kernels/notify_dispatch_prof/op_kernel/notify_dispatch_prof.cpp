@@ -19,8 +19,8 @@
 #define KERNEL_USE_WORKSPACE (1 * 1024 * 1024)
 
 extern "C" __global__ __aicore__ void notify_dispatch_prof(GM_ADDR sendData, GM_ADDR tokenPerExpertData,
-                                                           GM_ADDR sendDataOffset, GM_ADDR recvData, GM_ADDR totalRecvTokens,
-                                                           GM_ADDR recvCount, GM_ADDR recvOffset, GM_ADDR maxBs,
+                                                           GM_ADDR profBuf, GM_ADDR sendDataOffset, GM_ADDR recvData,
+                                                           GM_ADDR totalRecvTokens, GM_ADDR recvCount, GM_ADDR recvOffset, GM_ADDR maxBs,
                                                            GM_ADDR recvTokensPerExpert, GM_ADDR workspace, GM_ADDR tiling)
 {
     REGISTER_TILING_DEFAULT(Cam::NotifyDispatchProfTilingData);
@@ -50,19 +50,19 @@ extern "C" __global__ __aicore__ void notify_dispatch_prof(GM_ADDR sendData, GM_
 
     if (TILING_KEY_IS(TILING_KEY_FLOAT16)) {
         NotifyDispatchProf<float16_t> opKernel(rank, rankSize, extraFlag);
-        opKernel.Init(sendDataInput, tokenPerExpertDataInput, sendDataOffsetOutput, recvDataOutput, totalRecvTokens,
+        opKernel.Init(sendDataInput, tokenPerExpertDataInput, profBuf, sendDataOffsetOutput, recvDataOutput, totalRecvTokens,
             recvCount, recvOffset, maxBs, recvTokensPerExpert, len, numTokens, op, root, cycleCount, scale,
             scaleCount, offset, localRank, localRankSize);
         opKernel.Process();
     } else if (TILING_KEY_IS(TILING_KEY_FLOAT)) {
         NotifyDispatchProf<float> opKernel(rank, rankSize, extraFlag);
-        opKernel.Init(sendDataInput, tokenPerExpertDataInput, sendDataOffsetOutput, recvDataOutput, totalRecvTokens,
+        opKernel.Init(sendDataInput, tokenPerExpertDataInput, profBuf, sendDataOffsetOutput, recvDataOutput, totalRecvTokens,
             recvCount, recvOffset, maxBs, recvTokensPerExpert, len, numTokens, op, root, cycleCount, scale,
             scaleCount, offset, localRank, localRankSize);
         opKernel.Process();
     } else if (TILING_KEY_IS(TILING_KEY_INT)) {
         NotifyDispatchProf<int> opKernel(rank, rankSize, extraFlag);
-        opKernel.Init(sendDataInput, tokenPerExpertDataInput, sendDataOffsetOutput, recvDataOutput, totalRecvTokens,
+        opKernel.Init(sendDataInput, tokenPerExpertDataInput, profBuf, sendDataOffsetOutput, recvDataOutput, totalRecvTokens,
             recvCount, recvOffset, maxBs, recvTokensPerExpert, len, numTokens, op, root, cycleCount, scale,
             scaleCount, offset, localRank, localRankSize);
         opKernel.Process();

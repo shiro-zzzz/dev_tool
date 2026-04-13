@@ -263,11 +263,20 @@ class AscendProfTool:
                 base = (data_region_start
                         + j * block_num * iter_core_stride
                         + i * iter_core_stride)
+                if base >= len(buf_np):
+                    continue
                 cnt = int(buf_np[base])
+                max_record_by_slot = max_slots
+                max_record_by_region = max(0, (iter_core_stride - core_meta_size) // 2)
+                cnt = min(cnt, max_record_by_slot, max_record_by_region)
                 records = []
                 for k in range(cnt):
-                    tag = int(buf_np[base + core_meta_size + k * 2])
-                    ts = int(buf_np[base + core_meta_size + k * 2 + 1])
+                    tag_idx = base + core_meta_size + k * 2
+                    ts_idx = tag_idx + 1
+                    if ts_idx >= len(buf_np):
+                        break
+                    tag = int(buf_np[tag_idx])
+                    ts = int(buf_np[ts_idx])
                     records.append({"tag": tag, "cycle": ts})
                 iter_data["cores"].append({
                     "core_id": i,

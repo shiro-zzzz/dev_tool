@@ -26,6 +26,20 @@
                     "float",
                     "int32"
                 ]
+            },
+            {
+                "name": "prof_buf",
+                "param_type": "required",
+                "format": [
+                    "ND",
+                    "ND",
+                    "ND"
+                ],
+                "type": [
+                    "int64",
+                    "int64",
+                    "int64"
+                ]
             }
         ],
         "output_desc": [
