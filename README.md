@@ -8,6 +8,18 @@
 
 dev_toolkit 是一个开发工具集合，旨在提高开发效率。
 
+## 🧰 工具导航
+
+### 1) Ascend 打点工具（优先推荐）
+
+- 文档入口：[`ascend_tool/README_kernel_profiler.md`](ascend_tool/README_kernel_profiler.md)
+- 功能简介：用于 Ascend 自定义算子执行链路打点与耗时分析，支持定位算子内核阶段的性能瓶颈，便于快速做性能优化与问题排查。
+
+### 2) lcov 映射工具
+
+- 文档入口：[`README_lcov_mapper.md`](README_lcov_mapper.md)
+- 功能简介：用于处理与映射 lcov 覆盖率结果，帮助将覆盖率数据和源码路径对齐，便于在多目录或生成代码场景下查看覆盖率。
+
 ## ✨ 特性
 
 - 🚀 易于使用
@@ -38,15 +50,27 @@ cd dev_toolkit
 
 ```
 dev_toolkit/
-├── src/            # 源代码
-├── tests/          # 测试文件
-├── docs/           # 文档
-├── examples/       # 示例代码
-├── .github/        # GitHub 配置
-├── README.md       # 项目说明
-├── LICENSE         # 许可证
-├── CONTRIBUTING.md # 贡献指南
-└── CHANGELOG.md    # 更新日志
+├── ascend_tool/                      # Ascend 打点工具
+│   ├── README.md
+│   ├── README_kernel_profiler.md     # 打点工具详细文档
+│   ├── examples/                     # 打点示例与测试
+│   └── src/                          # 打点工具实现与算子代码
+│       ├── ascend_prof_tool.py       # 打点工具主入口
+│       ├── ascend_kernels/           # Ascend 自定义算子与生成代码
+│       │   ├── notify_dispatch_prof/
+│       │   ├── vec_add_prof/
+│       │   ├── prof_core_clock_sync/
+│       │   ├── utils/                # host/kernel 通用工具
+│       │   ├── pregen/               # aclnn 自动生成产物
+│       │   └── cmake_files/
+│       └── pybind/                   # Python 绑定与扩展打包
+│           └── pytorch_extension/
+├── docs/                             # 通用文档
+├── tests/                            # 通用测试
+├── examples/                         # 通用示例
+├── README_lcov_mapper.md             # lcov 映射工具文档
+├── README.md                         # 项目说明
+└── .cursor/                          # Cursor 配置与技能
 ```
 
 ## 🤝 贡献
