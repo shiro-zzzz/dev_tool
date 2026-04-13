@@ -1,0 +1,153 @@
+[
+    {
+        "op": "NotifyDispatch",
+        "language": "cpp",
+        "input_desc": [
+            {
+                "name": "sendData",
+                "param_type": "required",
+                "format": [
+                    "ND"
+                ],
+                "type": [
+                    "float16",
+                    "float",
+                    "int32"
+                ]
+            },
+            {
+                "name": "tokenPerExpertData",
+                "param_type": "required",
+                "format": [
+                    "ND"
+                ],
+                "type": [
+                    "float16",
+                    "float",
+                    "int32"
+                ]
+            }
+        ],
+        "output_desc": [
+            {
+                "name": "sendDataOffset",
+                "param_type": "required",
+                "format": [
+                    "ND"
+                ],
+                "type": [
+                    "float16",
+                    "float",
+                    "int32"
+                ]
+            },
+            {
+                "name": "recvData",
+                "param_type": "required",
+                "format": [
+                    "ND"
+                ],
+                "type": [
+                    "float16",
+                    "float",
+                    "int32"
+                ]
+            },
+            {
+                "name": "totalRecvTokens",
+                "param_type": "required",
+                "format": [
+                    "ND"
+                ],
+                "type": [
+                    "float16",
+                    "float",
+                    "int32"
+                ]
+            },
+            {
+                "name": "recvCount",
+                "param_type": "required",
+                "format": [
+                    "ND"
+                ],
+                "type": [
+                    "float16",
+                    "float",
+                    "int32"
+                ]
+            },
+            {
+                "name": "recvOffset",
+                "param_type": "required",
+                "format": [
+                    "ND"
+                ],
+                "type": [
+                    "float16",
+                    "float",
+                    "int32"
+                ]
+            },
+            {
+                "name": "maxBs",
+                "param_type": "required",
+                "format": [
+                    "ND"
+                ],
+                "type": [
+                    "float16",
+                    "float",
+                    "int32"
+                ]
+            },
+            {
+                "name": "recvTokensPerExpert",
+                "param_type": "required",
+                "format": [
+                    "ND"
+                ],
+                "type": [
+                    "int64"
+                ]
+            }
+        ],
+        "attr": [
+            {
+                "name": "sendCount",
+                "param_type": "required",
+                "type": "int"
+            },
+            {
+                "name": "num_tokens",
+                "param_type": "required",
+                "type": "int"
+            },
+            {
+                "name": "comm_group",
+                "param_type": "required",
+                "type": "string"
+            },
+            {
+                "name": "rank_size",
+                "param_type": "required",
+                "type": "int"
+            },
+            {
+                "name": "rank_id",
+                "param_type": "required",
+                "type": "int"
+            },
+            {
+                "name": "local_rank_size",
+                "param_type": "required",
+                "type": "int"
+            },
+            {
+                "name": "local_rank_id",
+                "param_type": "required",
+                "type": "int"
+            }
+        ]
+    }
+]

@@ -23,4 +23,15 @@ at::Tensor VecAddProfImplAutograd(
 
 at::Tensor ProfCoreClockSyncImpl(const at::Tensor &sync_buf);
 
+std::vector<at::Tensor> NotifyDispatchImpl(
+    const at::Tensor &sendData,
+    const at::Tensor &tokenPerExpertData,
+    int64_t sendCount,
+    int64_t numTokens,
+    const std::string &commGroup,
+    int64_t rankSize,
+    int64_t rankId,
+    int64_t localRankSize,
+    int64_t localRankId);
+
 #endif // COMMON_OPS_CSRC_FUNCTIONS_H_
