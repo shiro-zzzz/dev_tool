@@ -26,7 +26,7 @@
 #include "register/op_def_registry.h"
 #include "tiling/hccl/hccl_tiling.h"
 #include "tiling/platform/platform_ascendc.h"
-#include "../op_kernel/notify_dispatch_tiling.h"
+#include "../op_kernel/notify_dispatch_prof_tiling.h"
 
 #ifdef USE_CANN83_PATH
 #include "platform/platform_infos_def.h"
@@ -80,7 +80,7 @@ constexpr static int ALL_TO_ALL_CORE_NUM = 32;
 } // namespace
 
 namespace optiling {
-static void PrintTilingDataInfo(const char *nodeName, const NotifyDispatchTilingData &tilingData)
+static void PrintTilingDataInfo(const char *nodeName, const NotifyDispatchProfTilingData &tilingData)
 {
     OPS_LOG_D(nodeName, "rankSize is %u.", tilingData.notifyDispatchInfo.rankSize);
     OPS_LOG_D(nodeName, "rankId is %u.", tilingData.notifyDispatchInfo.rankId);
@@ -93,7 +93,7 @@ static void PrintTilingDataInfo(const char *nodeName, const NotifyDispatchTiling
 }
 
 static ge::graphStatus GetAttrAndSetTilingData(const gert::TilingContext &context, const char *nodeName,
-                                               NotifyDispatchTilingData &tilingData, std::string &commGroup)
+                                               NotifyDispatchProfTilingData &tilingData, std::string &commGroup)
 {
     auto attrs = context.GetAttrs();
     OPS_ERR_IF(attrs == nullptr, OPS_LOG_E(nodeName, "attrs is nullptr."), return ge::GRAPH_FAILED);
@@ -145,11 +145,11 @@ static ge::graphStatus GetAttrAndSetTilingData(const gert::TilingContext &contex
     return ge::GRAPH_SUCCESS;
 }
 
-static void SetHcommCfg(const gert::TilingContext &context, NotifyDispatchTilingData &tiling,
+static void SetHcommCfg(const gert::TilingContext &context, NotifyDispatchProfTilingData &tiling,
                         const std::string commGroup)
 {
     const char *nodeName = context.GetNodeName();
-    OPS_LOG_D(nodeName, "NotifyDispatch commGroup = %s", commGroup.c_str());
+    OPS_LOG_D(nodeName, "NotifyDispatchProf commGroup = %s", commGroup.c_str());
     uint32_t opType1 = OP_TYPE_ALL_TO_ALL;
     std::string algConfigAllToAllStr = "AlltoAll=level0:fullmesh;level1:pairwise";
 
@@ -215,7 +215,7 @@ static bool CheckTensorDataType(gert::TilingContext &context, const char *nodeNa
         return false);
 
     // Verify the size of the win area
-    NotifyDispatchTilingData *tilingData = context.GetTilingData<NotifyDispatchTilingData>();
+    NotifyDispatchProfTilingData *tilingData = context.GetTilingData<NotifyDispatchProfTilingData>();
     OPS_ERR_IF(tilingData == nullptr, OPS_LOG_E(nodeName, "tilingData is nullptr."), return false);
     uint64_t maxWindowSize = Mc2TilingUtils::GetMaxWindowSize();
     uint64_t actualSize = dataSize * tilingData->notifyDispatchInfo.sendCount + 2 * 1024 * 1024; // 2MB flag
@@ -234,14 +234,14 @@ static ge::graphStatus TilingCheckTensor(gert::TilingContext &context, const cha
     return ge::GRAPH_SUCCESS;
 }
 
-static ge::graphStatus NotifyDispatchTilingFuncImpl(gert::TilingContext &context)
+static ge::graphStatus NotifyDispatchProfTilingFuncImpl(gert::TilingContext &context)
 {
     const char *nodeName = context.GetNodeName();
     OPS_ERR_IF(nodeName == nullptr, OPS_LOG_E("unKnownNodeName", "nodeName is nullptr."), return ge::GRAPH_FAILED);
-    NotifyDispatchTilingData *tilingData = context.GetTilingData<NotifyDispatchTilingData>();
+    NotifyDispatchProfTilingData *tilingData = context.GetTilingData<NotifyDispatchProfTilingData>();
     OPS_ERR_IF(tilingData == nullptr, OPS_LOG_E(nodeName, "tilingData is nullptr."), return ge::GRAPH_FAILED);
     std::string commGroup = "";
-    OPS_LOG_I(nodeName, "Enter NotifyDispatch tiling check func.");
+    OPS_LOG_I(nodeName, "Enter NotifyDispatchProf tiling check func.");
 
     OPS_ERR_IF(GetAttrAndSetTilingData(context, nodeName, *tilingData, commGroup) != ge::GRAPH_SUCCESS,
                     OPS_LOG_E(nodeName, "Get attr and set tiling data failed."), return ge::GRAPH_FAILED);
@@ -293,20 +293,20 @@ static ge::graphStatus NotifyDispatchTilingFuncImpl(gert::TilingContext &context
     return ge::GRAPH_SUCCESS;
 }
 
-static ge::graphStatus NotifyDispatchTilingFunc(gert::TilingContext *context)
+static ge::graphStatus NotifyDispatchProfTilingFunc(gert::TilingContext *context)
 {
-    ge::graphStatus ret = NotifyDispatchTilingFuncImpl(*context);
+    ge::graphStatus ret = NotifyDispatchProfTilingFuncImpl(*context);
     return ret;
 }
 
-struct NotifyDispatchCompileInfo {};
-ge::graphStatus TilingParseForNotifyDispatch(gert::TilingParseContext *context)
+struct NotifyDispatchProfCompileInfo {};
+ge::graphStatus TilingParseForNotifyDispatchProf(gert::TilingParseContext *context)
 {
     (void)context;
     return ge::GRAPH_SUCCESS;
 }
 
-IMPL_OP_OPTILING(NotifyDispatch)
-    .Tiling(NotifyDispatchTilingFunc)
-    .TilingParse<NotifyDispatchCompileInfo>(TilingParseForNotifyDispatch);
+IMPL_OP_OPTILING(NotifyDispatchProf)
+    .Tiling(NotifyDispatchProfTilingFunc)
+    .TilingParse<NotifyDispatchProfCompileInfo>(TilingParseForNotifyDispatchProf);
 } // namespace optiling

@@ -1,21 +1,21 @@
 /*
  * Copyright (c) Huawei Technologies Co., Ltd. 2026-2026. All rights reserved.
- * Description: add notify dispatch interface header file.
+ * Description: add notify dispatch prof interface header file.
  * Create: 2026-04-08
  * Note:
- * History: 2026-04-08 add notify dispatch interface header file.
+ * History: 2026-04-08 add notify dispatch prof interface header file.
  */
 
-#ifndef ACLNN_NOTIFY_DISPATCH_H_
-#define ACLNN_NOTIFY_DISPATCH_H_
+#ifndef ACLNN_NOTIFY_DISPATCH_PROF_H_
+#define ACLNN_NOTIFY_DISPATCH_PROF_H_
 
 #include "aclnn/acl_meta.h"
 
 #ifdef __cplusplus
 extern "C" {
-#endif
+#endif // ACLNN_NOTIFY_DISPATCH_PROF_H_
 
-__attribute__((visibility("default"))) aclnnStatus aclnnNotifyDispatchGetWorkspaceSize(
+__attribute__((visibility("default"))) aclnnStatus aclnnNotifyDispatchProfGetWorkspaceSize(
     const aclTensor *sendData, const aclTensor *tokenPerExpertData,
     int64_t sendCount, int64_t numTokens, char *commGroup,
     int64_t rankSize, int64_t rankId, int64_t localRankSize, int64_t localRankId,
@@ -25,8 +25,8 @@ __attribute__((visibility("default"))) aclnnStatus aclnnNotifyDispatchGetWorkspa
     const aclTensor *recvTokensPerExpert,
     uint64_t *workspaceSize, aclOpExecutor **executor);
 
-__attribute__((visibility("default"))) aclnnStatus aclnnNotifyDispatch(void *workspace, uint64_t workspaceSize,
-                                                                       aclOpExecutor *executor, aclrtStream stream);
+__attribute__((visibility("default"))) aclnnStatus aclnnNotifyDispatchProf(void *workspace, uint64_t workspaceSize,
+                                                                           aclOpExecutor *executor, aclrtStream stream);
 
 #ifdef __cplusplus
 }

@@ -7,9 +7,9 @@
  * History: 2026-01-05 create notify dispatch function file in device part
  */
 
-#include "notify_dispatch.h"
+#include "notify_dispatch_prof.h"
 #include "kernel_operator.h"
-#include "notify_dispatch_tiling.h"
+#include "notify_dispatch_prof_tiling.h"
 
 #define TILING_KEY_FLOAT16  20
 #define TILING_KEY_BFLOAT16 21
@@ -18,13 +18,13 @@
 
 #define KERNEL_USE_WORKSPACE (1 * 1024 * 1024)
 
-extern "C" __global__ __aicore__ void notify_dispatch(GM_ADDR sendData, GM_ADDR tokenPerExpertData,
-                                                      GM_ADDR sendDataOffset, GM_ADDR recvData, GM_ADDR totalRecvTokens,
-                                                      GM_ADDR recvCount, GM_ADDR recvOffset, GM_ADDR maxBs,
-                                                      GM_ADDR recvTokensPerExpert, GM_ADDR workspace, GM_ADDR tiling)
+extern "C" __global__ __aicore__ void notify_dispatch_prof(GM_ADDR sendData, GM_ADDR tokenPerExpertData,
+                                                           GM_ADDR sendDataOffset, GM_ADDR recvData, GM_ADDR totalRecvTokens,
+                                                           GM_ADDR recvCount, GM_ADDR recvOffset, GM_ADDR maxBs,
+                                                           GM_ADDR recvTokensPerExpert, GM_ADDR workspace, GM_ADDR tiling)
 {
-    REGISTER_TILING_DEFAULT(Cam::NotifyDispatchTilingData);
-    GET_TILING_DATA_WITH_STRUCT(Cam::NotifyDispatchTilingData, tilingData, tiling);
+    REGISTER_TILING_DEFAULT(Cam::NotifyDispatchProfTilingData);
+    GET_TILING_DATA_WITH_STRUCT(Cam::NotifyDispatchProfTilingData, tilingData, tiling);
 
     int localRank = tilingData.notifyDispatchInfo.localRankId;
     int localRankSize = tilingData.notifyDispatchInfo.localRankSize;
@@ -49,19 +49,19 @@ extern "C" __global__ __aicore__ void notify_dispatch(GM_ADDR sendData, GM_ADDR 
     int blockNum = GetBlockNum();
 
     if (TILING_KEY_IS(TILING_KEY_FLOAT16)) {
-        NotifyDispatch<float16_t> opKernel(rank, rankSize, extraFlag);
+        NotifyDispatchProf<float16_t> opKernel(rank, rankSize, extraFlag);
         opKernel.Init(sendDataInput, tokenPerExpertDataInput, sendDataOffsetOutput, recvDataOutput, totalRecvTokens,
             recvCount, recvOffset, maxBs, recvTokensPerExpert, len, numTokens, op, root, cycleCount, scale,
             scaleCount, offset, localRank, localRankSize);
         opKernel.Process();
     } else if (TILING_KEY_IS(TILING_KEY_FLOAT)) {
-        NotifyDispatch<float> opKernel(rank, rankSize, extraFlag);
+        NotifyDispatchProf<float> opKernel(rank, rankSize, extraFlag);
         opKernel.Init(sendDataInput, tokenPerExpertDataInput, sendDataOffsetOutput, recvDataOutput, totalRecvTokens,
             recvCount, recvOffset, maxBs, recvTokensPerExpert, len, numTokens, op, root, cycleCount, scale,
             scaleCount, offset, localRank, localRankSize);
         opKernel.Process();
     } else if (TILING_KEY_IS(TILING_KEY_INT)) {
-        NotifyDispatch<int> opKernel(rank, rankSize, extraFlag);
+        NotifyDispatchProf<int> opKernel(rank, rankSize, extraFlag);
         opKernel.Init(sendDataInput, tokenPerExpertDataInput, sendDataOffsetOutput, recvDataOutput, totalRecvTokens,
             recvCount, recvOffset, maxBs, recvTokensPerExpert, len, numTokens, op, root, cycleCount, scale,
             scaleCount, offset, localRank, localRankSize);

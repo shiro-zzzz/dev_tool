@@ -1,14 +1,14 @@
 /*
  * SPDX-License-Identifier: MIT
  * Copyright (c) Huawei Technologies Co., Ltd. 2026-2026. All rights reserved.
- * Description: notify dispatch function device header file
+ * Description: notify dispatch prof function device header file
  * Create: 2026-01-05
  * Note:
- * History: 2026-01-05 create notify dispatch header file in device part
+ * History: 2026-01-05 create notify dispatch prof header file in device part
  */
 
-#ifndef NOTIFY_DISPATCH_H
-#define NOTIFY_DISPATCH_H
+#ifndef NOTIFY_DISPATCH_PROF_H
+#define NOTIFY_DISPATCH_PROF_H
 
 #include "kernel_operator.h"
 #include <climits>
@@ -27,7 +27,7 @@ template <AscendC::HardEvent event> __aicore__ inline void SyncFunc()
     AscendC::WaitFlag<event>(eventID);
 }
 
-template <typename T> class NotifyDispatch {
+template <typename T> class NotifyDispatchProf {
     constexpr static int64_t MAX_RANK_PER_CORE = 8;
     constexpr static int64_t MULTI_RANK_SIZE = 48;
     constexpr static int64_t MAX_BUFFER_NUMBER = 10;
@@ -41,7 +41,7 @@ template <typename T> class NotifyDispatch {
     constexpr static uint32_t FOURTH = 4;
 
 public:
-    __aicore__ inline NotifyDispatch(int rank, int rankSize, uint32_t extraFlag)
+    __aicore__ inline NotifyDispatchProf(int rank, int rankSize, uint32_t extraFlag)
         : rank(rank), rankSize(rankSize), extraFlag(extraFlag)
     {
     }
@@ -507,13 +507,13 @@ private:
 };
 
 template <typename T>
-__aicore__ inline int64_t NotifyDispatch<T>::GetDataCount(const int64_t dataLen, const int64_t useBlockNum)
+__aicore__ inline int64_t NotifyDispatchProf<T>::GetDataCount(const int64_t dataLen, const int64_t useBlockNum)
 {
     return dataLen / useBlockNum;
 }
 
 template <typename T>
-__aicore__ inline GM_ADDR NotifyDispatch<T>::GetWindAddrByRankId(const int32_t rankId, uint8_t ctxIdx)
+__aicore__ inline GM_ADDR NotifyDispatchProf<T>::GetWindAddrByRankId(const int32_t rankId, uint8_t ctxIdx)
 {
     uint32_t curRankId = rank;
 #ifdef OPT_RANK_OFFSET
@@ -532,7 +532,7 @@ __aicore__ inline GM_ADDR NotifyDispatch<T>::GetWindAddrByRankId(const int32_t r
 }
 
 // Assign values to winContext_[COMM_EP_IDX] and blockIdx before calling
-template <typename T> __aicore__ inline uint64_t NotifyDispatch<T>::GetMagicValue(void)
+template <typename T> __aicore__ inline uint64_t NotifyDispatchProf<T>::GetMagicValue(void)
 {
     uint64_t magic = 0;
     GlobalTensor<uint64_t> selfDataStatusTensor;
@@ -548,7 +548,7 @@ template <typename T> __aicore__ inline uint64_t NotifyDispatch<T>::GetMagicValu
     return magic;
 }
 
-template <typename T> __aicore__ inline void NotifyDispatch<T>::InitSmallFullMesh(
+template <typename T> __aicore__ inline void NotifyDispatchProf<T>::InitSmallFullMesh(
     GM_ADDR sendDataInput, GM_ADDR tokenPerExpertDataInput, GM_ADDR sendDataOffsetOutput,
     GM_ADDR recvDataOutput, GM_ADDR totalRecvTokens, GM_ADDR recvCount, GM_ADDR recvOffset, GM_ADDR maxBs,
     GM_ADDR recvTokensPerExpert, int64_t len, int64_t numTokens, int op, int root, int cycleCount, GM_ADDR scale,
@@ -607,9 +607,9 @@ template <typename T> __aicore__ inline void NotifyDispatch<T>::InitSmallFullMes
  */
 template <typename T>
 template <typename K, typename U>
-__aicore__ inline void NotifyDispatch<T>::CpGM2GMPingPong(int64_t dataSizeRemain,
-                                                          const GlobalTensor<U> &sendDataInputGt,
-                                                          const GlobalTensor<K> &recvDataOutputGT, int op)
+__aicore__ inline void NotifyDispatchProf<T>::CpGM2GMPingPong(int64_t dataSizeRemain,
+                                                              const GlobalTensor<U> &sendDataInputGt,
+                                                              const GlobalTensor<K> &recvDataOutputGT, int op)
 {
     constexpr int32_t ubBlockSize = UB_SINGLE_PING_PONG_ADD_SIZE_MAX;
     constexpr int32_t ubAlignNum = ubBlockSize / (sizeof(K) + sizeof(U)) / UB_ALIGN_SIZE * UB_ALIGN_SIZE;
@@ -665,7 +665,7 @@ __aicore__ inline void NotifyDispatch<T>::CpGM2GMPingPong(int64_t dataSizeRemain
     return;
 }
 
-template <typename T> template <typename F> __aicore__ inline void NotifyDispatch<T>::SetAtomic(int op)
+template <typename T> template <typename F> __aicore__ inline void NotifyDispatchProf<T>::SetAtomic(int op)
 {
     PipeBarrier<PIPE_ALL>();
     if (op != -1) {
@@ -676,7 +676,7 @@ template <typename T> template <typename F> __aicore__ inline void NotifyDispatc
     PipeBarrier<PIPE_ALL>();
 }
 
-template <typename T> __aicore__ inline void NotifyDispatch<T>::UnsetAtomic(int op)
+template <typename T> __aicore__ inline void NotifyDispatchProf<T>::UnsetAtomic(int op)
 {
     if (op != -1) {
         AscendC::SetAtomicNone();
@@ -686,10 +686,10 @@ template <typename T> __aicore__ inline void NotifyDispatch<T>::UnsetAtomic(int 
 
 template <typename T>
 template <HardEvent eventType>
-__aicore__ inline void NotifyDispatch<T>::SetWaitEvent(event_t eventId)
+__aicore__ inline void NotifyDispatchProf<T>::SetWaitEvent(event_t eventId)
 {
     AscendC::SetFlag<eventType>(eventId);
     AscendC::WaitFlag<eventType>(eventId);
 }
 
-#endif // NOTIFY_DISPATCH_H
+#endif // NOTIFY_DISPATCH_PROF_H

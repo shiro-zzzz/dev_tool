@@ -23,7 +23,7 @@ at::Tensor VecAddProfImplAutograd(
 
 at::Tensor ProfCoreClockSyncImpl(const at::Tensor &sync_buf);
 
-std::vector<at::Tensor> NotifyDispatchImpl(
+std::vector<at::Tensor> NotifyDispatchProfImpl(
     const at::Tensor &sendData,
     const at::Tensor &tokenPerExpertData,
     int64_t sendCount,

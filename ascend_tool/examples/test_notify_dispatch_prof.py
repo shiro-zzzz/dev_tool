@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-test_notify_dispatch.py — NotifyDispatch 算子验证脚本
+test_notify_dispatch_prof.py — NotifyDispatchProf 算子验证脚本
 
 使用方法:
-  1. 先构建算子: compile_ascend_proj.sh (确保 NotifyDispatch.json 被 msopgen 处理)
+  1. 先构建算子: compile_ascend_proj.sh (确保 NotifyDispatchProf.json 被 msopgen 处理)
   2. 安装生成的 .run 包
   3. 构建 pybind wheel 并安装
   4. 在分布式环境中运行 (spawn 拉起):
-     python test_notify_dispatch.py --mode npu --num-processes N
+     python test_notify_dispatch_prof.py --mode npu --num-processes N
 
 说明:
-  NotifyDispatch 是一个 MoE (Mixture-of-Experts) 通信算子，
+  NotifyDispatchProf 是一个 MoE (Mixture-of-Experts) 通信算子，
   使用 HCCL AlltoAll 实现跨 rank 的 expert token 分发调度。
   它需要在多卡分布式环境（HCCL 通信域已初始化）下运行。
 
@@ -36,7 +36,7 @@ SEND_PER_GROUP = 3  # 每个 expert 的发送数据分组：(token_count, prefix
 # ─────────────────────────────────────────────────────────────────────────────
 def compute_output_shapes(send_count, rank_size):
     """
-    根据 sendCount 和 rankSize 计算 NotifyDispatch 各输出张量的期望形状。
+    根据 sendCount 和 rankSize 计算 NotifyDispatchProf 各输出张量的期望形状。
 
     Parameters
     ----------
@@ -100,7 +100,7 @@ def demo_mode():
     模拟不同 rank_size 和 num_experts 的配置。
     """
     print("=" * 70)
-    print("  NotifyDispatch 模拟模式 — 参数计算与输出形状验证")
+    print("  NotifyDispatchProf 模拟模式 — 参数计算与输出形状验证")
     print("=" * 70)
 
     test_cases = [
@@ -204,7 +204,7 @@ def init_hccl_env_and_group(local_rank, num_local_ranks, dist, torch, torch_npu)
 
 def npu_worker(local_rank, num_local_ranks):
     """
-    在已建立 HCCL 通信域的多卡环境下运行 NotifyDispatch 算子。
+    在已建立 HCCL 通信域的多卡环境下运行 NotifyDispatchProf 算子。
     使用 torch.multiprocessing.spawn 拉起多进程。
     """
     try:
@@ -226,7 +226,7 @@ def npu_worker(local_rank, num_local_ranks):
 
     if rank == 0:
         print("=" * 70)
-        print("  NotifyDispatch NPU 真机模式")
+        print("  NotifyDispatchProf NPU 真机模式")
         print(f"  rank_size={rank_size}, local_rank_size={local_rank_size}")
         print("=" * 70)
 
@@ -252,10 +252,10 @@ def npu_worker(local_rank, num_local_ranks):
 
     # ---------- 执行算子 ----------
     if rank == 0:
-        print(f"\n  Running NotifyDispatch: num_experts={NUM_EXPERTS}, "
+        print(f"\n  Running NotifyDispatchProf: num_experts={NUM_EXPERTS}, "
               f"num_tokens={NUM_TOKENS}, send_count={SEND_COUNT}")
 
-    outputs = ascend_tool.notify_dispatch(
+    outputs = ascend_tool.notify_dispatch_prof(
         send_data=send_data,
         token_per_expert_data=token_per_expert_data,
         send_count=SEND_COUNT,
@@ -322,7 +322,7 @@ def npu_mode(num_processes):
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="NotifyDispatch 算子验证脚本")
+        description="NotifyDispatchProf 算子验证脚本")
     parser.add_argument(
         "--mode", choices=["demo", "npu"], default="demo",
         help="运行模式: demo=模拟验证(无需NPU), npu=真机执行(需多卡环境)")

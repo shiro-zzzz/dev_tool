@@ -10,9 +10,9 @@
 #include "register/op_def_registry.h"
 
 namespace ops {
-class NotifyDispatch : public OpDef {
+class NotifyDispatchProf : public OpDef {
 public:
-    explicit NotifyDispatch(const char *name) : OpDef(name)
+    explicit NotifyDispatchProf(const char *name) : OpDef(name)
     {
         this->Input("sendData")
             .ParamType(REQUIRED)
@@ -85,5 +85,5 @@ public:
     }
 };
 
-OP_ADD(NotifyDispatch);
+OP_ADD(NotifyDispatchProf);
 } // namespace ops

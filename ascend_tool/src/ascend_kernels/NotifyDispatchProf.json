@@ -1,6 +1,6 @@
 [
     {
-        "op": "NotifyDispatch",
+        "op": "NotifyDispatchProf",
         "language": "cpp",
         "input_desc": [
             {
