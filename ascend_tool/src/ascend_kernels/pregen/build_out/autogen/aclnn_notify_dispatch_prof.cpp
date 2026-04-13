@@ -1,0 +1,53 @@
+/*
+ * Copyright (c) Huawei Technologies Co., Ltd. 2026-2026. All rights reserved.
+ * Description: add notify dispatch interface cpp file.
+ * Create: 2026-04-08
+ * Note:
+ * History: 2026-04-08 add notify dispatch interface cpp file.
+ */
+
+#include <string.h>
+#include "aclnnInner_notify_dispatch_prof.h"
+#include "graph/types.h"
+#include "aclnn_notify_dispatch_prof.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+namespace {
+static constexpr int32_t NNOPBASE_HCCL_SERVER_TYPE_AICPU = 0;
+static constexpr int32_t NNOPBASE_HCCL_SERVER_TYPE_MTE = 1;
+static constexpr int32_t NNOPBASE_HCCL_SERVER_TYPE_END = 2;
+} // namespace
+extern "C" void __attribute__((weak)) NnopbaseSetHcclServerType(void *executor, int32_t sType);
+
+aclnnStatus aclnnNotifyDispatchProfGetWorkspaceSize(const aclTensor *sendData, const aclTensor *tokenPerExpertData,
+                                                    const aclTensor *profBuf,
+                                                    int64_t sendCount, int64_t numTokens, char *commGroup,
+                                                    int64_t rankSize, int64_t rankId, int64_t localRankSize,
+                                                    int64_t localRankId,
+                                                    const aclTensor *sendDataOffset, const aclTensor *recvData,
+                                                    const aclTensor *totalRecvTokens, const aclTensor *recvCount,
+                                                    const aclTensor *recvOffset, const aclTensor *maxBs,
+                                                    const aclTensor *recvTokensPerExpert,
+                                                    uint64_t *workspaceSize, aclOpExecutor **executor)
+{
+    return aclnnInnerNotifyDispatchProfGetWorkspaceSize(sendData, tokenPerExpertData, profBuf, sendCount, numTokens, commGroup,
+                                                        rankSize, rankId, localRankSize, localRankId,
+                                                        sendDataOffset, recvData, totalRecvTokens, recvCount,
+                                                        recvOffset, maxBs, recvTokensPerExpert,
+                                                        workspaceSize, executor);
+}
+
+aclnnStatus aclnnNotifyDispatchProf(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
+{
+    if (NnopbaseSetHcclServerType) {
+        NnopbaseSetHcclServerType(executor, NNOPBASE_HCCL_SERVER_TYPE_MTE);
+    }
+    return aclnnInnerNotifyDispatchProf(workspace, workspaceSize, executor, stream);
+}
+
+#ifdef __cplusplus
+}
+#endif

@@ -1,0 +1,30 @@
+[
+    {
+        "op": "ProfCoreClockSync",
+        "language": "cpp",
+        "input_desc": [
+            {
+                "name": "sync_buf",
+                "param_type": "required",
+                "format": [
+                    "ND"
+                ],
+                "type": [
+                    "int64"
+                ]
+            }
+        ],
+        "output_desc": [
+            {
+                "name": "sync_timestamps",
+                "param_type": "required",
+                "format": [
+                    "ND"
+                ],
+                "type": [
+                    "int64"
+                ]
+            }
+        ]
+    }
+]

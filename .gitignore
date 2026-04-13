@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.venv/
+venv/
+ENV/
+env/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+.npm
+.eslintcache
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+*.cover
+.hypothesis/
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+*.out
+*.o
+*.a
+*.lib
+*.dll
+*.exe
+
+# Ascend tool artifacts
+ascend_tool/output/
+ascend_tool/third_party/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+tmp/
+temp/
