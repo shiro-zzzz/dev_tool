@@ -61,6 +61,10 @@ logs/
 *.dll
 *.exe
 
+# Ascend tool artifacts
+ascend_tool/output/
+ascend_tool/third_party/
+
 # Temporary files
 *.tmp
 *.temp
