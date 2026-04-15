@@ -409,7 +409,7 @@ def test_multi_card_worker(
     dist.all_reduce(warmup_tensor, op=dist.ReduceOp.SUM, group=group)
     torch.npu.synchronize()
 
-    rank_offsets = tool.calibrate_rank_clocks(world_size, rank)
+    rank_offsets = tool.calibrate_rank_clocks(world_size, rank, group=group)
     if rank == 0:
         print(f"  Global offsets sample: "
               f"(0,0)={rank_offsets.get((0,0), 'N/A'):.1f}, "

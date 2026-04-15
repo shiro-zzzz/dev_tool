@@ -110,8 +110,8 @@ description: Add profiling support to an Ascend custom operator end-to-end by wi
 推荐流程（多卡）：
 
 1. `tool = AscendProfTool(sync_rounds=16)`
-2. 先做 HCCL warmup，再调用：
-   - `rank_offsets = tool.calibrate_rank_clocks(world_size, rank)`
+2. 先做 HCCL warmup，并在与业务一致的通信组上调用：
+   - `rank_offsets = tool.calibrate_rank_clocks(world_size, rank, group=group)`
 3. 根据 `rank_offsets` 推断当前 rank 核数并分配 `prof_buf`
 4. 调算子时传入 `prof_buf`
 5. `prof_data = AscendProfTool.parse_prof_buf(prof_buf)`

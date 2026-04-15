@@ -278,7 +278,7 @@ def npu_worker(local_rank, num_local_ranks, trace_dir):
     warmup_tensor = torch.ones(1, dtype=torch.int64, device=f"npu:{local_rank}")
     dist.all_reduce(warmup_tensor, op=dist.ReduceOp.SUM, group=group)
     torch_npu.npu.synchronize()
-    rank_offsets = tool.calibrate_rank_clocks(rank_size, rank)
+    rank_offsets = tool.calibrate_rank_clocks(rank_size, rank, group=group)
     prof_block_dim = infer_block_dim_from_offsets(rank_offsets, rank)
     print(f"[Rank {rank}] detected block_dim={prof_block_dim}")
 

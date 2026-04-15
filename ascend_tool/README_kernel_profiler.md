@@ -175,7 +175,7 @@ AscendProfTool(block_dim=None, sync_rounds=16)
 | 方法 | 返回值 | 说明 |
 |------|--------|------|
 | `calibrate_core_clocks()` | `Dict[int, float]` | 单卡多核时钟校准。返回 `{core_id: offset_cycles}` |
-| `calibrate_rank_clocks(ep_world_size, ep_rank_id)` | `Dict[Tuple[int,int], float]` | 多卡多核时钟校准。返回 `{(rank, core): offset_cycles}` |
+| `calibrate_rank_clocks(ep_world_size, ep_rank_id, group=None)` | `Dict[Tuple[int,int], float]` | 多卡多核时钟校准。返回 `{(rank, core): offset_cycles}`；`group` 为集合通信使用的通信组 |
 | `parse_prof_buf(buf)` | `Dict` | 解析 kernel_tool.h 生成的 GM buffer（支持多轮迭代） |
 | `generate_trace_json(prof_data_list, offsets, output_path, ...)` | — | 生成单 rank 的 Chrome Trace JSON |
 | `generate_merged_trace_json(prof_data_list, offsets, output_path, ...)` | — | 通过 allgather 合并所有 rank 生成统一 Trace JSON（仅 rank 0 写入） |
@@ -371,12 +371,15 @@ from ascend_prof_tool import AscendProfTool
 # 假设已初始化分布式环境
 ep_world_size = dist.get_world_size()
 ep_rank_id = dist.get_rank()
+ep_group = dist.new_group(list(range(ep_world_size)))
 
 tool = AscendProfTool(sync_rounds=16)
 
 # 步骤 1: 多卡时钟校准
 # 内部流程: HCCL barrier → ProfCoreClockSync → HCCL allgather
-offsets = tool.calibrate_rank_clocks(ep_world_size, ep_rank_id)
+offsets = tool.calibrate_rank_clocks(
+    ep_world_size, ep_rank_id, group=ep_group
+)
 # offsets = {(0, 0): 0.0, (0, 1): -2.5, (1, 0): 150.0, ...}
 
 # 步骤 2: 各 rank 独立执行带打点的算子并解析
@@ -739,7 +742,7 @@ PROF_GM_BUF_SIZE(coreNum, maxIters)
 2. `op_kernel`：接入 `prof_buf`，在 `Process()` 中加入 `PROF_INIT` / `PROF_RECORD_TIME` / `PROF_TO_GM`
 3. `pybind`：声明、实现、`TORCH_LIBRARY` schema 三处签名一致
 4. `aclnn`：`GetWorkspaceSize` 签名透传 `profBuf`
-5. `torch` 用例：`calibrate_rank_clocks -> parse_prof_buf -> generate_trace_json -> generate_merged_trace_json`
+5. `torch` 用例：`calibrate_rank_clocks(..., group=ep_group) -> parse_prof_buf -> generate_trace_json -> generate_merged_trace_json`
 6. 保护项：避免 `prof_buf` 按错误核数分配导致解析越界
 
 ### 7.4 推荐配套实践
