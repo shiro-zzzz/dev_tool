@@ -4,7 +4,8 @@
 test_ascend_prof_tool.py — AscendProfTool 单卡/多卡 trace 生成验证
 
 参考 tests/python/deepep/test_intranode_direct.py 的测试框架，使用:
-  - VecAddProf 算子 (单卡/多卡场景)
+  - VecAddProf 算子 (单卡场景)
+  - NotifyDispatchProf 算子 (多卡场景)
 
 验证 AscendProfTool 的完整流程:
   1. 时钟校准 (单卡 / 多卡)
@@ -49,6 +50,24 @@ PROF_ITER_CORE_STRIDE = 136  # from kernel_tool.h: CORE_META_SIZE(8) + CORE_DATA
 PROF_CORE_HEADER_SIZE = 8    # from kernel_tool.h: CORE_HEADER_SIZE
 PROF_GLOBAL_HEADER_SIZE = 8  # from kernel_tool.h: GLOBAL_HEADER_SIZE
 PROF_MAX_SLOTS = 64
+PROF_MAX_ITERS = 10
+PROF_BLOCK_DIM_FALLBACK = 64
+SEND_PER_GROUP = 3  # notify_dispatch sendData 组: (token_count, prefix_sum, num_tokens)
+
+NOTIFY_DISPATCH_TAG_NAMES = {
+    0: "Init",
+    100: "AssembleSendDataDone",
+    200: "InputToShareSliceDone",
+    300: "ShareToShareSliceDone",
+    400: "ReorderOutputDone",
+    500: "BuildTotalRecvTokensDone",
+    600: "BuildRecvCountDone",
+    700: "BuildRecvOffsetDone",
+    800: "BuildMaxBsDone",
+    900: "BuildRecvTokenPerExpDone",
+    999: "AllDone",
+    PROF_ITER_END_TAG: "IterEnd",
+}
 
 
 # =========================================================================== #
@@ -96,6 +115,45 @@ def prof_buf_int64_size(block_dim: int, max_iters: int = 1) -> int:
     core_headers = block_dim * PROF_CORE_HEADER_SIZE
     data_region = max_iters * block_dim * PROF_ITER_CORE_STRIDE
     return global_header + core_headers + data_region
+
+
+def infer_block_dim_from_offsets(rank_offsets, rank, fallback=PROF_BLOCK_DIM_FALLBACK):
+    """从 calibrate_rank_clocks 的结果推断当前 rank 实际核数."""
+    core_ids = [core for (r, core) in rank_offsets.keys() if r == rank]
+    if not core_ids:
+        return fallback
+    return max(core_ids) + 1
+
+
+def compute_notify_output_shapes(send_count: int, rank_size: int) -> dict:
+    """根据 sendCount/rankSize 推导 NotifyDispatchProf 输出 shape."""
+    num_experts = send_count // SEND_PER_GROUP
+    return {
+        "sendDataOffset": (num_experts,),
+        "recvData": (send_count,),
+        "totalRecvTokens": (1,),
+        "recvCount": (num_experts,),
+        "recvOffset": (num_experts,),
+        "maxBs": (1,),
+        "recvTokensPerExpert": (num_experts // rank_size,),
+    }
+
+
+def validate_notify_output_shapes(outputs: dict, expected_shapes: dict) -> bool:
+    """校验 NotifyDispatchProf 输出 shape."""
+    all_pass = True
+    for name, expected in expected_shapes.items():
+        actual = outputs.get(name)
+        if actual is None:
+            print(f"  [FAIL] {name}: missing", flush=True)
+            all_pass = False
+            continue
+        if actual != expected:
+            print(f"  [FAIL] {name}: expected {expected}, got {actual}", flush=True)
+            all_pass = False
+        else:
+            print(f"  [PASS] {name}: shape = {actual}", flush=True)
+    return all_pass
 
 
 # =========================================================================== #
@@ -315,6 +373,10 @@ def test_single_card(trace_dir: str):
     tool = AscendProfTool(sync_rounds=16)
     all_pass = True
     NUM_RUNS = 10
+    assert NUM_RUNS <= PROF_MAX_ITERS, (
+        f"NUM_RUNS={NUM_RUNS} exceeds kernel PROF_MAX_ITERS={PROF_MAX_ITERS}; "
+        "increase PROF_MAX_ITERS in kernel_tool.h or reduce NUM_RUNS"
+    )
 
     print("\n[Single] Step 1: 单卡多核时钟校准")
     offsets = tool.calibrate_core_clocks()
@@ -374,7 +436,7 @@ def test_single_card(trace_dir: str):
 
 
 # =========================================================================== #
-#                    多卡测试 (VecAddProf)
+#                    多卡测试 (NotifyDispatchProf)
 # =========================================================================== #
 
 def test_multi_card_worker(
@@ -398,7 +460,7 @@ def test_multi_card_worker(
     NUM_RUNS = 10
 
     # ================================================================
-    # 场景 1: 多卡时钟校准 + VecAddProf trace
+    # 场景 1: 多卡时钟校准
     # ================================================================
     print(f"\n[Rank {rank}] 场景 1: 多卡时钟校准", flush=True)
 
@@ -420,55 +482,102 @@ def test_multi_card_worker(
     dist.barrier()
 
     # ================================================================
-    # 场景 2: 多卡 VecAddProf (各 rank 独立运行 + 全局偏移, 多轮 launch)
+    # 场景 2: 多卡 NotifyDispatchProf (共享 prof_buf, 多轮 launch)
     # ================================================================
-    print(f"\n[Rank {rank}] 场景 2: 多卡 VecAddProf trace "
+    print(f"\n[Rank {rank}] 场景 2: 多卡 NotifyDispatchProf trace "
           f"(共享 prof_buf, NUM_RUNS={NUM_RUNS})", flush=True)
 
-    N = BLOCK_DIM * TILE_LENGTH * 4
-    prof_size_va = prof_buf_int64_size(BLOCK_DIM, max_iters=NUM_RUNS)
-    prof_buf_va = torch.zeros(prof_size_va, dtype=torch.int64, device="npu")
-    x = torch.randn(N, dtype=torch.float16, device="npu")
-    y = torch.randn(N, dtype=torch.float16, device="npu")
+    backend = group._get_backend(torch.device("npu"))
+    comm_group = backend.get_hccl_comm_name(rank)
+    if isinstance(comm_group, bytes):
+        comm_group = comm_group.decode("utf-8")
 
-    # 通过 HCCL allreduce 同步所有 rank, 再用 slice copy 将输出写入 x,
-    # 建立纯 device 端数据依赖, 确保各 rank 的 vec_add_prof 同时开始.
-    sync_tensor = torch.ones(1, dtype=torch.float16, device="npu")
-    dist.all_reduce(sync_tensor, op=dist.ReduceOp.SUM)
-    x[:1].copy_(x[:1] + sync_tensor)
+    num_experts = world_size * 4  # 每 rank 4 个 expert
+    num_tokens = 1024
+    send_count = num_experts * SEND_PER_GROUP
 
+    rng = np.random.default_rng(42 + rank)
+    token_per_expert_np = rng.integers(
+        1, max(2, num_tokens // num_experts * 3),
+        size=num_experts, dtype=np.int32
+    )
+    token_per_expert_np = (
+        token_per_expert_np / token_per_expert_np.sum() * num_tokens
+    ).astype(np.int32)
+    diff = num_tokens - token_per_expert_np.sum()
+    token_per_expert_np[0] += diff
+    assert token_per_expert_np.sum() == num_tokens, \
+        f"Token sum mismatch: {token_per_expert_np.sum()} != {num_tokens}"
+
+    token_per_expert_data = torch.from_numpy(token_per_expert_np).to(
+        dtype=torch.int32, device="npu"
+    )
+    send_data = torch.zeros(send_count, dtype=torch.int32, device="npu")
+
+    prof_block_dim = infer_block_dim_from_offsets(rank_offsets, rank)
+    prof_size = prof_buf_int64_size(prof_block_dim, max_iters=NUM_RUNS)
+    prof_buf = torch.zeros(prof_size, dtype=torch.int64, device="npu")
+    print(f"  [Rank {rank}] prof_buf elems={prof_size} "
+          f"(block_dim={prof_block_dim}, max_iters={NUM_RUNS}, "
+          f"max_slots={PROF_MAX_SLOTS})", flush=True)
+
+    # 通过 HCCL allreduce 建立 device 端依赖，缩小跨 rank launch 抖动
+    sync_tensor = torch.ones(1, dtype=torch.int64, device="npu")
+    dist.all_reduce(sync_tensor, op=dist.ReduceOp.SUM, group=group)
+    send_data[:1].copy_(sync_tensor.to(torch.int32))
+
+    output_names = [
+        "sendDataOffset", "recvData", "totalRecvTokens",
+        "recvCount", "recvOffset", "maxBs", "recvTokensPerExpert"
+    ]
+    outputs = None
     for run_idx in range(NUM_RUNS):
-        z = ascend_tool.vec_add_prof(x, y, prof_buf_va)
+        outputs = ascend_tool.notify_dispatch_prof(
+            send_data=send_data,
+            token_per_expert_data=token_per_expert_data,
+            prof_buf=prof_buf,
+            send_count=send_count,
+            num_tokens=num_tokens,
+            comm_group=comm_group,
+            rank_size=world_size,
+            rank_id=rank,
+            local_rank_size=num_local_ranks,
+            local_rank_id=local_rank,
+        )
 
     torch.npu.synchronize()
-    dist.barrier()
+    dist.barrier(group=group)
 
-    # 正确性验证
-    z_cpu = z.cpu().float()
-    ref = x.cpu().float() + y.cpu().float()
-    max_err = (z_cpu - ref).abs().max().item()
-    status = 'PASS' if max_err < 0.01 else 'FAIL'
-    print(f"  [Rank {rank}] VecAdd correctness: max_error = {max_err:.6f} "
-          f"({status})", flush=True)
-    if max_err >= 0.01:
-        all_pass = False
+    output_dict = {name: tuple(t.shape) for name, t in zip(output_names, outputs)}
+    expected_shapes = compute_notify_output_shapes(send_count, world_size)
+    shape_pass = validate_notify_output_shapes(output_dict, expected_shapes)
+    all_pass = all_pass and shape_pass
 
-    va_data = AscendProfTool.parse_prof_buf(prof_buf_va)
-    print(f"  [Rank {rank}] block_num={va_data['block_num']}, "
-          f"iterations={len(va_data['iterations'])}", flush=True)
-    assert len(va_data["iterations"]) == NUM_RUNS, \
-        f"Expected {NUM_RUNS} iterations, got {len(va_data['iterations'])}"
+    if rank == 0:
+        total_recv = int(outputs[2].cpu().item())
+        max_bs = int(outputs[5].cpu().item())
+        consistency_pass = (total_recv > 0) and (max_bs > 0)
+        print(f"  [Rank 0] totalRecvTokens={total_recv}, maxBs={max_bs}, "
+              f"consistency={'PASS' if consistency_pass else 'FAIL'}", flush=True)
+        all_pass = all_pass and consistency_pass
 
-    trace_path_va = os.path.join(trace_dir, f"multi_card_vecadd_rank{rank}.json")
+    notify_data = AscendProfTool.parse_prof_buf(prof_buf)
+    print(f"  [Rank {rank}] block_num={notify_data['block_num']}, "
+          f"iterations={len(notify_data['iterations'])}", flush=True)
+    assert len(notify_data["iterations"]) == NUM_RUNS, \
+        f"Expected {NUM_RUNS} iterations, got {len(notify_data['iterations'])}"
+
+    trace_path = os.path.join(trace_dir, f"multi_card_notify_dispatch_rank{rank}.json")
     tool.generate_trace_json(
-        prof_data_list=[va_data],
+        prof_data_list=[notify_data],
         offsets=rank_offsets,
-        output_path=trace_path_va,
-        kernel_names={0: "VecAddProf"},
+        output_path=trace_path,
+        kernel_names={0: "NotifyDispatchProf"},
         rank_id=rank,
+        tag_names=NOTIFY_DISPATCH_TAG_NAMES,
     )
-    if not validate_trace_json(trace_path_va, expected_kernels=NUM_RUNS,
-                               expected_cores=BLOCK_DIM):
+    if not validate_trace_json(trace_path, expected_kernels=NUM_RUNS,
+                               expected_cores=prof_block_dim):
         all_pass = False
 
     # ================================================================
@@ -479,17 +588,18 @@ def test_multi_card_worker(
 
     merged_path = os.path.join(trace_dir, "multi_card_merged.json")
     tool.generate_merged_trace_json(
-        prof_data_list=[va_data],
+        prof_data_list=[notify_data],
         offsets=rank_offsets,
         output_path=merged_path,
         world_size=world_size,
         rank=rank,
-        kernel_names={0: "VecAddProf"},
+        kernel_names={0: "NotifyDispatchProf"},
+        tag_names=NOTIFY_DISPATCH_TAG_NAMES,
     )
 
     if rank == 0:
         if not validate_trace_json(merged_path, expected_kernels=NUM_RUNS,
-                                   expected_cores=BLOCK_DIM):
+                                   expected_cores=prof_block_dim):
             all_pass = False
 
     # ================================================================
