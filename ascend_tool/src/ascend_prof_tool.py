@@ -101,13 +101,19 @@ class AscendProfTool:
         self,
         ep_world_size: int,
         ep_rank_id: int,
+        group=None,
     ) -> Dict[Tuple[int, int], float]:
         """
         多卡多核时钟校准.
 
         先通过 HCCL barrier (allreduce) 同步所有 rank, 确保各卡从同一时刻
         开始; 再每张卡独立调用 ProfCoreClockSync 完成卡内多核同步; 最后通过
-        HCCL allgather 收集所有 rank 的同步时间戳, 计算全局偏移.
+        HCCL allgather 收集所有 rank 的同步时间戳.
+
+        偏移估计采用两阶段:
+        1) rank 内: 各 core 先对齐到该 rank 的参考 core;
+        2) rank 间: 基于 rank 内归一化后的时间戳估计 rank 偏移;
+        最终合成为全局 (rank, core) 偏移.
 
         通过 tensor 依赖建立 NPU stream 上的执行顺序:
         barrier → ProfCoreClockSync → allgather.
@@ -118,6 +124,8 @@ class AscendProfTool:
             EP 通讯域中 rank 总数.
         ep_rank_id : int
             本 rank ID.
+        group : torch.distributed.ProcessGroup, optional
+            集合通信使用的通信组. None 表示默认进程组.
 
         Returns
         -------
@@ -135,7 +143,7 @@ class AscendProfTool:
         # 使用 allreduce 作为 barrier, 其输出 tensor 将写入 sync_buf
         # 以建立与后续 ProfCoreClockSync 的数据依赖.
         barrier_tensor = torch.ones(1, dtype=torch.int64, device="npu")
-        dist.all_reduce(barrier_tensor, op=dist.ReduceOp.SUM)
+        dist.all_reduce(barrier_tensor, op=dist.ReduceOp.SUM, group=group)
 
         # Step 2: 调用 ProfCoreClockSync 完成卡内多核同步
         # 通过 slice 赋值将 barrier 输出写入 sync_buf, 纯 device 端操作,
@@ -148,34 +156,94 @@ class AscendProfTool:
         # Step 3: 通过 HCCL allgather 收集所有 rank 的同步时间戳
         # allgather 与 prof_core_clock_sync 通过 result tensor 建立依赖.
         gathered = [torch.zeros_like(result) for _ in range(ep_world_size)]
-        dist.all_gather(gathered, result)
+        dist.all_gather(gathered, result, group=group)
 
         torch.npu.synchronize()
 
-        # 解析每个 rank 的同步结果并计算全局偏移
-        all_rank_timestamps = {}  # (rank, core) -> list[cycle]
+        # 解析每个 rank 的同步结果:
+        # all_rank_timestamps[rank_id][core_id] = [cycle_round_0, ...]
+        all_rank_timestamps = {}
         for rank_id, rank_result in enumerate(gathered):
             rank_np = rank_result.cpu().numpy()
             header, per_core = self._parse_sync_output(rank_np)
-            for core_id, cycles_per_round in per_core.items():
-                all_rank_timestamps[(rank_id, core_id)] = cycles_per_round
+            all_rank_timestamps[rank_id] = per_core
 
-        # 以 (rank 0, core 0) 为参考, 丢弃 warmup 轮, 取中位数
-        ref_key = (0, 0)
-        ref_ts = all_rank_timestamps.get(ref_key, [0] * self.sync_rounds)
+        # 两阶段偏移估计:
+        # 1) rank 内: 每个 core 对齐到该 rank 的参考 core
+        # 2) rank 间: 基于归一化后的时间戳估计每个 rank 相对参考 rank 的偏移
         warmup = self.WARMUP_ROUNDS
 
-        offsets = {}
-        for (rank_id, core_id), ts_list in all_rank_timestamps.items():
-            n = min(len(ts_list), len(ref_ts))
+        def _median_diff(ts_a: List[int], ts_b: List[int]) -> float:
+            n = min(len(ts_a), len(ts_b))
             if n > warmup:
-                diffs = [ts_list[r] - ref_ts[r] for r in range(warmup, n)]
-                offsets[(rank_id, core_id)] = float(np.median(diffs))
+                diffs = [ts_a[r] - ts_b[r] for r in range(warmup, n)]
             elif n > 0:
-                diffs = [ts_list[r] - ref_ts[r] for r in range(n)]
-                offsets[(rank_id, core_id)] = float(np.median(diffs))
+                diffs = [ts_a[r] - ts_b[r] for r in range(n)]
             else:
-                offsets[(rank_id, core_id)] = 0.0
+                return 0.0
+            return float(np.median(diffs))
+
+        # Stage 1: rank 内对齐
+        intra_offsets = {}      # (rank, core) -> offset to rank-ref-core
+        normalized_ts = {}      # rank -> core -> normalized cycles
+        for rank_id, per_core in all_rank_timestamps.items():
+            if not per_core:
+                continue
+            rank_ref_core = 0 if 0 in per_core else min(per_core.keys())
+            rank_ref_ts = per_core[rank_ref_core]
+            normalized_ts[rank_id] = {}
+            for core_id, ts_list in per_core.items():
+                intra = _median_diff(ts_list, rank_ref_ts)
+                intra_offsets[(rank_id, core_id)] = intra
+                normalized_ts[rank_id][core_id] = [v - intra for v in ts_list]
+
+        if not normalized_ts:
+            return {}
+
+        # Stage 2: rank 间对齐 (参考 rank 默认取 0)
+        ref_rank = 0 if 0 in normalized_ts else min(normalized_ts.keys())
+        ref_per_core = normalized_ts[ref_rank]
+        rank_offsets = {ref_rank: 0.0}
+
+        for rank_id, per_core in normalized_ts.items():
+            if rank_id == ref_rank:
+                continue
+
+            diffs = []
+            common_cores = sorted(set(per_core.keys()) & set(ref_per_core.keys()))
+            for core_id in common_cores:
+                ts_a = per_core[core_id]
+                ts_b = ref_per_core[core_id]
+                n = min(len(ts_a), len(ts_b))
+                start = warmup if n > warmup else 0
+                for r in range(start, n):
+                    diffs.append(ts_a[r] - ts_b[r])
+
+            if diffs:
+                rank_offsets[rank_id] = float(np.median(diffs))
+            else:
+                rank_ref_core = 0 if 0 in per_core else min(per_core.keys())
+                ref_core = rank_ref_core if rank_ref_core in ref_per_core else (
+                    0 if 0 in ref_per_core else min(ref_per_core.keys())
+                )
+                rank_offsets[rank_id] = _median_diff(
+                    per_core[rank_ref_core], ref_per_core[ref_core]
+                )
+
+        # 合成全局偏移: global = intra(rank, core) + inter(rank)
+        offsets = {}
+        for (rank_id, core_id), intra in intra_offsets.items():
+            offsets[(rank_id, core_id)] = intra + rank_offsets.get(rank_id, 0.0)
+
+        # 统一重定位到 (rank 0, core 0) 参考系 (若存在)
+        if (0, 0) in offsets:
+            base = offsets[(0, 0)]
+        else:
+            ref_core = 0 if 0 in ref_per_core else min(ref_per_core.keys())
+            base = offsets.get((ref_rank, ref_core), 0.0)
+        if base != 0.0:
+            for key in offsets:
+                offsets[key] -= base
 
         return offsets
 

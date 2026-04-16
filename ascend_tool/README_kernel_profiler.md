@@ -15,6 +15,7 @@
   - [4.3 Python 单卡完整流程](#43-python-单卡完整流程)
   - [4.4 Python 多卡完整流程](#44-python-多卡完整流程)
   - [4.5 VecAddProf 示例算子](#45-vecaddprof-示例算子)
+  - [4.6 示例脚本：test_ascend_prof_tool.py](#46-示例脚本test_ascend_prof_toolpy)
 - [5. 底层实现原理](#5-底层实现原理)
   - [5.1 Kernel 打点机制](#51-kernel-打点机制)
   - [5.2 GM 内存布局（多轮迭代）](#52-gm-内存布局多轮迭代)
@@ -175,7 +176,7 @@ AscendProfTool(block_dim=None, sync_rounds=16)
 | 方法 | 返回值 | 说明 |
 |------|--------|------|
 | `calibrate_core_clocks()` | `Dict[int, float]` | 单卡多核时钟校准。返回 `{core_id: offset_cycles}` |
-| `calibrate_rank_clocks(ep_world_size, ep_rank_id)` | `Dict[Tuple[int,int], float]` | 多卡多核时钟校准。返回 `{(rank, core): offset_cycles}` |
+| `calibrate_rank_clocks(ep_world_size, ep_rank_id, group=None)` | `Dict[Tuple[int,int], float]` | 多卡多核时钟校准。返回 `{(rank, core): offset_cycles}`；`group` 为集合通信使用的通信组 |
 | `parse_prof_buf(buf)` | `Dict` | 解析 kernel_tool.h 生成的 GM buffer（支持多轮迭代） |
 | `generate_trace_json(prof_data_list, offsets, output_path, ...)` | — | 生成单 rank 的 Chrome Trace JSON |
 | `generate_merged_trace_json(prof_data_list, offsets, output_path, ...)` | — | 通过 allgather 合并所有 rank 生成统一 Trace JSON（仅 rank 0 写入） |
@@ -371,12 +372,15 @@ from ascend_prof_tool import AscendProfTool
 # 假设已初始化分布式环境
 ep_world_size = dist.get_world_size()
 ep_rank_id = dist.get_rank()
+ep_group = dist.new_group(list(range(ep_world_size)))
 
 tool = AscendProfTool(sync_rounds=16)
 
 # 步骤 1: 多卡时钟校准
 # 内部流程: HCCL barrier → ProfCoreClockSync → HCCL allgather
-offsets = tool.calibrate_rank_clocks(ep_world_size, ep_rank_id)
+offsets = tool.calibrate_rank_clocks(
+    ep_world_size, ep_rank_id, group=ep_group
+)
 # offsets = {(0, 0): 0.0, (0, 1): -2.5, (1, 0): 150.0, ...}
 
 # 步骤 2: 各 rank 独立执行带打点的算子并解析
@@ -439,6 +443,37 @@ Tag 编码约定：
 | 998 | 最终同步点 |
 | 999 | 全部完成 |
 | 99999 | ITER_END（`PROF_TO_GM` 自动追加） |
+
+### 4.6 示例脚本：`test_ascend_prof_tool.py`
+
+脚本路径：`ascend_tool/examples/test_ascend_prof_tool.py`
+
+该脚本整合了 AscendProfTool 的典型验证流程：
+- `mock`：无 NPU 的解析/trace 生成自测
+- `single`：单卡 `VecAddProf`（共享 `prof_buf` 连续多次 launch）
+- `multi`：多卡 `NotifyDispatchProf`（共享 `prof_buf` 连续多次 launch + 多 rank 合并 trace）
+
+运行方式：
+
+```bash
+# 1) Mock（无需 NPU）
+python ascend_tool/examples/test_ascend_prof_tool.py --mode mock
+
+# 2) 单卡 VecAddProf（默认 NUM_RUNS=10，多次 launch 共享同一 prof_buf）
+python ascend_tool/examples/test_ascend_prof_tool.py --mode single --trace-dir ./traces
+
+# 3) 多卡 NotifyDispatchProf（默认 NUM_RUNS=10）
+python ascend_tool/examples/test_ascend_prof_tool.py --mode multi --num-processes 2 --trace-dir ./traces
+
+# 4) 全部流程
+python ascend_tool/examples/test_ascend_prof_tool.py --mode all --num-processes 2 --trace-dir ./traces
+```
+
+多卡模式下会输出：
+- 每个 rank 一份 trace：`multi_card_notify_dispatch_rank<rank>.json`
+- 合并 trace：`multi_card_merged.json`
+
+以上 trace 可直接用 `chrome://tracing` 或 Perfetto 打开。
 
 ---
 
@@ -739,7 +774,7 @@ PROF_GM_BUF_SIZE(coreNum, maxIters)
 2. `op_kernel`：接入 `prof_buf`，在 `Process()` 中加入 `PROF_INIT` / `PROF_RECORD_TIME` / `PROF_TO_GM`
 3. `pybind`：声明、实现、`TORCH_LIBRARY` schema 三处签名一致
 4. `aclnn`：`GetWorkspaceSize` 签名透传 `profBuf`
-5. `torch` 用例：`calibrate_rank_clocks -> parse_prof_buf -> generate_trace_json -> generate_merged_trace_json`
+5. `torch` 用例：`calibrate_rank_clocks(..., group=ep_group) -> parse_prof_buf -> generate_trace_json -> generate_merged_trace_json`
 6. 保护项：避免 `prof_buf` 按错误核数分配导致解析越界
 
 ### 7.4 推荐配套实践
